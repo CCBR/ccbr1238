@@ -28,3 +28,10 @@ hs_err_pid*
 # annotation 
 *.RDS
 biogrid/*
+
+# R files
+.Rproj.user
+.Rhistory
+
+# tmp files
+*._*

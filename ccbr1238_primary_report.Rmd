@@ -1,0 +1,140 @@
+---
+title: "CCBR1238"
+author: "Samantha Sevilla"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+## Background information
+
+### Set dirs
+```{r set_dir, echo=FALSE, warning=FALSE, include=FALSE}
+pipeliner_dir="~/../../Volumes/ccbr1238/rnaseq/123022_2/"
+output_dir="~/../../Volumes/ccbr1238/analysis_230221/"
+
+dir.create(file.path(output_dir), showWarnings = FALSE)
+```
+
+### Set thresholds
+```{r}
+species_in="Homo sapiens"
+log2_cutoff=1.5
+fdr_cutoff=0.05
+```
+
+### Set pkgs
+```{r set_pkg, echo=FALSE, warning=FALSE, include=FALSE}
+if (species_in == "Homo sapiens"){
+  species_db="org.Hs.eg.db"
+} else if (species_in == "Mus musculus"){
+  species_db="org.Mm.eg.db"
+} else{
+    print("Species not approved")
+}
+# package list
+list.of.packages=c("BiocManager","tidyr","DT","RUVSeq","RColorBrewer","textshape",
+                   "pheatmap","grid","dplyr","EnhancedVolcano","edgeR","DESeq2","ggplot2","plotly",
+                   "msigdbr","clusterProfiler","ggpubr","ggridges","factoextra",
+                   "gplots","ReactomePA",species_db,"pander","ggVennDiagram")
+
+#install as needed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+# source functions
+source("~/../../Volumes/ccbr1238/scripts/ccbr1238_source_code.R")
+
+# load packages
+invisible(lapply(list.of.packages, library, character.only = TRUE))
+
+#negate
+`%ni%` <- Negate(`%in%`)
+
+```
+
+### Set contrasts
+```{r set_contrasts, echo=FALSE, warning=FALSE, include=FALSE}
+fpath=paste0(pipeliner_dir,"groups.tab")
+groups_df=read.csv(fpath,sep="\t",header=FALSE)
+colnames(groups_df)=c("replicate","group","replicate2")
+head(groups_df)  
+
+contrasts_list=c("SCR_4mM-SCR_0pt5mM",
+                 "SH1_0pt5mM-SCR_0pt5mM",
+                 "SH2_0pt5mM-SCR_0pt5mM",
+                 "SH3_0pt5mM-SCR_0pt5mM",
+                 "SH4_0pt5mM-SCR_0pt5mM",
+                 "SH5_0pt5mM-SCR_0pt5mM",
+                 "SH6_0pt5mM-SCR_0pt5mM")
+```
+
+## Quality Assessment
+### BEFORE NORMALIZATION
+
+Filtered data findings:
+- SCR samples under different conditions cluster separately from one another.
+- SH samples by group cluster separately: GCN1 KD (SH1-3) and ATF4 KD (SH4-6). 
+    - The two groups are not as uniform within SH types: SH1-3 cluster tightly, SH4-5 cluster tightly, SH6 clusters alone.
+- All replicates cluster tightly together.
+
+```{r qc_f, echo=FALSE, warning=FALSE}
+group_list=c("SCR_4mM","SCR_0pt5mM",
+             "SH1_0pt5mM","SH2_0pt5mM",
+             "SH3_0pt5mM","SH4_0pt5mM",
+             "SH5_0pt5mM","SH6_0pt5mM")
+MAIN_PREP_QC_CORE(groups_in=group_list,
+                  stage_in="before_norm")
+```
+
+### AFTER NORMALIZATION:
+Upper quantile normalization findings:
+- This did not provide much correction over the filtered counts.
+```{r qc_upper, echo=FALSE,warning=FALSE}
+group_list=c("SCR_4mM","SCR_0pt5mM",
+             "SH1_0pt5mM","SH2_0pt5mM",
+             "SH3_0pt5mM","SH4_0pt5mM",
+             "SH5_0pt5mM","SH6_0pt5mM")
+MAIN_PREP_QC_CORE(groups_in=group_list,
+                  stage_in="upper_quant")
+```
+
+DESEQ2 normalization findings:
+- This provided slightly better correction than upper quantile, but also did not significantly deviate from the filtered counts. This method is suggested for further analysis.
+
+```{r qc_deseq, echo=FALSE,warning=FALSE, message=FALSE}
+group_list=c("SCR_4mM","SCR_0pt5mM",
+             "SH1_0pt5mM","SH2_0pt5mM",
+             "SH3_0pt5mM","SH4_0pt5mM",
+             "SH5_0pt5mM","SH6_0pt5mM")
+MAIN_PREP_QC_CORE(groups_in=group_list,
+                  stage_in="DESEQ")
+```
+
+### Run DEG Analysis
+Find differential differences between each of the contrasts
+```{r deg_prim, echo=FALSE,warning=FALSE, message=FALSE}
+for (contrast_id in contrasts_list){
+  PRIMARY_DIFFERENTIAL(contrast_id)
+}
+```
+
+Find the overlap between contrasts: SH1, SH2, SH3
+```{r deg_o1, echo=FALSE,warning=FALSE, message=FALSE}
+compare_list=c(contrasts_list[2],
+               contrasts_list[3],
+               contrasts_list[4])
+subtitle="SH1,SH2,SH3"
+COMPARATIVE_VENN_DIAGRAM(compare_list_in = compare_list,
+                         subtitle_in = subtitle)
+```
+
+Find the overlap between contrasts: SH4, SH5, SH6
+```{r deg_o2, echo=FALSE,warning=FALSE, message=FALSE}
+compare_list=c(contrasts_list[5],
+               contrasts_list[6],
+               contrasts_list[7])
+subtitle="SH5,SH6,SH7"
+COMPARATIVE_VENN_DIAGRAM(compare_list_in = compare_list,
+                         subtitle_in = subtitle)
+```

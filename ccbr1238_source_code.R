@@ -1,0 +1,1307 @@
+################################################################################
+# formatting
+################################################################################
+## shorten any list of names
+SHORTEN_NAMES<-function(list_in,to_remove){
+  shortened_names=sub(to_remove,"",list_in)
+  return(shortened_names)
+}
+
+################################################################################
+# initial QC
+################################################################################
+## input the counts matrix
+FORMAT_COUNTS_MATRIX<-function(contrast_id,sampleinfo){
+  # set extension
+  extensions=c(paste0("__",dedup_status,"__",norm_type_cutandrun,".bed"))
+  
+  # set variables
+  rawcountsmatrix=paste0(car_subpath,contrast_id,extensions,"/",
+                         contrast_id,extensions,"_",method,"countsmatrix.txt")
+  # prep counts
+  rawcounts = read.csv(rawcountsmatrix,
+                       header = TRUE,sep="\t",
+                       comment.char = "#", 
+                       strip.white = TRUE,
+                       check.names = FALSE,
+                       colClasses = "character")
+  rawcounts = as.data.frame(rawcounts)
+  rawcounts %>% column_to_rownames("peakID") -> rawcounts
+  
+  # convert character to numeric to integer
+  x = matrix(as.numeric(as.matrix(rawcounts)),ncol=ncol(rawcounts))
+  x = matrix(mapply(x,FUN=as.integer),ncol=ncol(rawcounts))
+  x = as.data.frame(x)
+  colnames(x) = colnames(rawcounts)
+  rownames(x) = rownames(rawcounts)
+  rawcounts = x
+  
+  return(rawcounts)
+}
+
+## generate RLA and PCOA plots
+GENERATE_RLE_PLOT<-function(input_data,input_samples,input_title,stage_in){
+  #input_data=filtered;input_samples=sample_list;input_title="Fig. Before Normalization"
+  
+  #set colors
+  x=subset(groups_df,replicate %in% input_samples)$group
+  colors <- brewer.pal(length(unique(x)), "Set2")
+  x=as.factor(x)#set pheno data
+  
+  #Plot results
+  par(mfrow=c(1, 2), oma=c(3, 2, 0, 0)+0.1)
+  if (stage_in=="before_norm"){
+    plotRLE(as.matrix(input_data), outline=FALSE, ylim=c(-.5, .5), col=colors[x],las=2, cex.axis = .8)
+    plotPCA(as.matrix(input_data), col=colors[x], cex=.8)
+  } else if (stage_in=="upper_quant"){
+    plotRLE(input_data, outline=FALSE, ylim=c(-.5, .5), col=colors[x],las=2, cex.axis = .8)
+    plotPCA(input_data, col=colors[x], cex=.8)
+  } else if (stage_in=="DESEQ"){
+    plotRLE(counts(input_data, normalize=TRUE), outline=FALSE, ylim=c(-.5, .5), col=colors[x],las=2, cex.axis = .8)
+    plotPCA(counts(input_data,normalize=TRUE), col=colors[x], cex=.8)
+  }
+  mtext(input_title, side=2, outer=TRUE, adj=0)  
+}
+
+## generate RMS boxplots
+GENERATE_BOXPLOTS<-function(sampleinfo,filtered){
+  #set lib
+  #determine lib reduction factor
+  if (mean(colSums(filtered))>10000000){
+    lib_factor=1e6
+  } else if (mean(colSums(filtered))>1000000){
+    lib_factor=1e5
+  } else if (mean(colSums(filtered))>100000){
+    lib_factor=1e4
+  } else if (mean(colSums(filtered))>10000){
+    lib_factor=1e3
+  } else if (mean(colSums(filtered))>1000){
+    lib_factor=1e2
+  } else if (mean(colSums(filtered))>100){
+    lib_factor=1e1
+  } else {
+    lib_factor=1e1
+  }
+  print(paste0("the lib",lib_factor," ",mean(colSums(filtered))))
+  
+  # filter
+  sampleinfo=sampleinfo[sampleinfo$replicate==colnames(filtered),]
+  sampleinfo$library_size=colSums(filtered)/lib_factor
+  sampleinfodf = as.data.frame(sampleinfo)
+  rownames(sampleinfo) = sampleinfo$sampleid
+  pander(sampleinfodf,style="rmarkdown")
+  
+  # melt data
+  rawcounts_logcpm = log2(cpm(filtered))
+  cpm_melt=reshape2::melt(rawcounts_logcpm)
+  colnames(cpm_melt)=c("geneID","sampleid","log2cpm")
+  
+  # print boxplots
+  p = ggplot(cpm_melt,aes(x=sampleid,y=log2cpm)) + 
+    geom_boxplot(fill=as.factor(as.numeric(as.factor(sampleinfo$group))+1)) +
+    theme_classic() +
+    coord_flip()
+  print(p)
+}
+
+## FORMAT_COUNTS_MATRIX
+## GENERATE_RLE_PLOT
+## GENERATE_BOXPLOTS
+MAIN_PREP_QC_CORE<-function(groups_in,stage_in){
+  # set sample_list
+  sample_list=subset(groups_df,group%in%groups_in)$replicate
+  
+  # read in rawcounts
+  fpath=paste0(pipeliner_dir,"DEG_ALL/RawCountFile_RSEM_genes.txt")
+  rawcounts=read.csv(fpath,sep="\t")
+  colnames(rawcounts)=SHORTEN_NAMES(colnames(rawcounts),"_expected_count")
+  rawcounts=rawcounts[,c("symbol",sample_list)]
+  rawcounts=rawcounts[,sample_list]
+  head(rawcounts)
+  
+  # filter
+  ## CPM is calcualted as "how many counts would I get for a gene if the sample had a library size of 1M".
+  #filtered=column_to_rownames(rawcounts)
+  filtered=ceiling(rawcounts)
+  cpm_counts=edgeR::cpm(as.matrix(filtered))
+  log_cpm_counts=log2(cpm_counts)
+  keep=rowSums(cpm_counts>0.5)>2
+  filtered=filtered[keep,]
+  head(filtered)
+  
+  if (stage_in=="before_norm"){
+    # generate RLE plot
+    GENERATE_RLE_PLOT(filtered,sample_list,"Fig. Before Normalization",stage_in)
+    
+    # generate boxplots
+    sampleinfo=subset(groups_df,group%in%group_list)
+    rownames(sampleinfo)=NULL
+    GENERATE_BOXPLOTS(sampleinfo,filtered)
+  } else if (stage_in=="upper_quant"){
+    # run upper quant norm
+    x=subset(groups_df,replicate %in% sample_list)$group
+    x=as.factor(x)
+    set <- newSeqExpressionSet(as.matrix(filtered),
+                               phenoData = data.frame(x, row.names=colnames(filtered)))
+    set_u <- betweenLaneNormalization(set, which="upper")
+    GENERATE_RLE_PLOT(set_u,sample_list,"Fig. UpperQuant Normalization",stage_in)
+  } else if (stage_in=="DESEQ"){
+    # run DESEQ
+    x=subset(groups_df,replicate %in% sample_list)$group
+    x=as.factor(x)
+    set <- newSeqExpressionSet(as.matrix(filtered),
+                               phenoData = data.frame(x, row.names=colnames(filtered)))
+    dds <- DESeqDataSetFromMatrix(countData = counts(set),
+                                  colData = pData(set),
+                                  design = ~ x)
+    dds <- DESeq(dds)
+    GENERATE_RLE_PLOT(dds,sample_list,"Fig. DESEq2 Normalization",stage_in)
+  }
+}
+
+################################################################################
+# primary differential
+################################################################################
+# reads diff results from pipeliner
+PRIMARY_DIFFERENTIAL<-function(contrast_in){
+  # id contrast
+  print(paste0("** Processing ", contrast_in," **"))
+  
+  # read in DEG
+  contrast_hypen=gsub("_vs_","-",contrast_in)
+  fpath=paste0(pipeliner_dir,"DEG_",contrast_in,"_0.5_0.5/",
+               "DESeq2_DEG_",contrast_in,"_all_genes.txt")
+  deg_df=read.csv(fpath,sep="\t")
+  
+  # split EID and gene, remove duplicate gene/symbol name
+  deg_df = deg_df %>% separate(col=ensid_gene,
+                               into=c("ensembleID","SYMBOL"),
+                               sep="[|]")
+  deg_df=deg_df[,c(1:2,4:ncol(deg_df))]
+  
+  # determine sig
+  deg_df$significance="N"
+  deg_df$significance[abs(deg_df$log2fc)>log2_cutoff & deg_df$fdr<fdr_cutoff]="Y"
+  
+  # print out result
+  print(paste0("--the number of significant genes found: ",nrow(subset(deg_df,significance=="Y"))))
+  
+  # write out DEG
+  fpath=paste0(output_dir,"DEG_",contrast_in,".csv")
+  write.csv(deg_df,fpath,row.names=FALSE)
+}
+
+COMPARATIVE_VENN_DIAGRAM<-function(compare_list_in,subtitle_in){
+  # for each of the contrasts, read in the DEG file and generate sig lists
+  for (contrast_id in compare_list_in){
+    sample_name=gsub("_0pt5mM-SCR_0pt5mM","",contrast_id)
+    print(paste0("** Processing ", sample_name," **"))
+    
+    # read DEG from primary differential
+    fpath=paste0(output_dir,"DEG_",contrast_id,".csv")
+    deg_df=read.csv(fpath)
+    
+    # create gene list for sig values only
+    tmp_list=subset(deg_df,significance=="Y")$SYMBOL
+    
+    # filter NA
+    tmp_list=tmp_list[!is.na(tmp_list)]
+    
+    # assign to SH name list
+    assign(paste0(sample_name,"_siglist"),tmp_list)
+  }
+  # create a sample list
+  sample_list=gsub("_0pt5mM-SCR_0pt5mM","",compare_list_in)
+  sample_sig_list=paste0(sample_list,"_siglist")
+  
+  # List of genes
+  x <- list(A = get(sample_sig_list[1]), B = get(sample_sig_list[2]), C=get(sample_sig_list[3]))
+  
+  # Venn diagram with custom category names
+  p = ggVennDiagram(x, color = 1, lwd = 0.7,
+                    category.names = c(sample_list[1], sample_list[2],sample_list[3])) + 
+    scale_fill_gradient(low = "red", high = "blue")
+  full_title=paste0("Significantly Differentiated Genes:\n",subtitle_in)
+  pf = p + ggtitle(full_title)
+  
+  # save and print venn diagram
+  print(pf)
+  fpath=paste0(output_dir,"venndiagram_",subtitle,"_genes.pdf")
+  ggsave(fpath,pf)
+  
+  # find intersections
+  union_all=union(get(sample_sig_list[1]),get(sample_sig_list[2]))
+  union_all=union(union_all,get(sample_sig_list[3]))
+  length(union_all)
+  
+  in_all=intersect(get(sample_sig_list[1]),get(sample_sig_list[2]))
+  in_all=intersect(in_all,get(sample_sig_list[3]))
+  length(in_all)
+  
+  cross_12=setdiff(intersect(get(sample_sig_list[1]),get(sample_sig_list[2])),in_all)
+  length(cross_12)
+  
+  cross_13=setdiff(intersect(get(sample_sig_list[1]),get(sample_sig_list[3])),in_all)
+  length(cross_13)
+  
+  cross_23=setdiff(intersect(get(sample_sig_list[2]),get(sample_sig_list[3])),in_all)
+  length(cross_23)
+  
+  only_1=setdiff(get(sample_sig_list[1]),in_all)
+  only_1=setdiff(only_1,cross_12)
+  only_1=setdiff(only_1,cross_13)
+  length(only_1)
+  
+  only_2=setdiff(get(sample_sig_list[2]),in_all)
+  only_2=setdiff(only_2,cross_12)
+  only_2=setdiff(only_2,cross_23)
+  length(only_2)
+  
+  only_3=setdiff(get(sample_sig_list[3]),in_all)
+  only_3=setdiff(only_3,cross_13)
+  only_3=setdiff(only_3,cross_23)
+  length(only_3)
+  
+  # create df
+  venn_df=data.frame(union_all)
+  venn_df$status=""
+  venn_df$status[venn_df$union_all %in% in_all]="sig_all"
+  venn_df$status[venn_df$union_all %in% cross_12]=paste0("sig_",sample_list[1],"_and_",sample_list[2])
+  venn_df$status[venn_df$union_all %in% cross_13]=paste0("sig_",sample_list[1],"_and_",sample_list[3])
+  venn_df$status[venn_df$union_all %in% cross_23]=paste0("sig_",sample_list[2],"_and_",sample_list[3])
+  venn_df$status[venn_df$union_all %in% only_1]=paste0("sig_",sample_list[1])
+  venn_df$status[venn_df$union_all %in% only_2]=paste0("sig_",sample_list[2])
+  venn_df$status[venn_df$union_all %in% only_3]=paste0("sig_",sample_list[3])
+  head(venn_df)
+  
+  # write out df
+  fpath=paste0(output_dir,"venn_diagram_significance_",subtitle,".csv")
+  write.csv(venn_df,fpath)
+}
+
+DUAL_VENN_DIAGRAM<-function(compare_list_in,subtitle_in){
+  # for each of the contrasts, read in the DEG file and generate sig lists
+  merged_df=data.frame()
+  for (contrast_id in compare_list_in){
+    sample_name=gsub("_0pt5mM-SCR_0pt5mM","",contrast_id)
+    print(paste0("** Processing ", sample_name," **"))
+    
+    # read DEG from primary differential
+    fpath=paste0(output_dir,"DEG_",contrast_id,".csv")
+    deg_df=read.csv(fpath)
+    
+    # create gene list for sig values only
+    sub_df=subset(deg_df,significance=="Y")
+    tmp_list=sub_df$SYMBOL
+    
+    # filter NA
+    tmp_list=tmp_list[!is.na(tmp_list)]
+    
+    # assign to SH name list
+    assign(paste0(sample_name,"_siglist"),tmp_list)
+    
+    sub_df
+    merged_df=rbind(merged_df,sub_df)
+  }
+  
+  # create a sample list
+  sample_list=gsub("_0pt5mM-SCR_0pt5mM","",compare_list_in)
+  sample_sig_list=paste0(sample_list,"_siglist")
+  
+  # List of genes
+  x <- list(A = get(sample_sig_list[1]), B = get(sample_sig_list[2]))
+  
+  # Venn diagram with custom category names
+  p = ggVennDiagram(x, color = 1, lwd = 0.7,
+                    category.names = c(sample_list[1], sample_list[2])) + 
+    scale_fill_gradient(low = "red", high = "blue")
+  full_title=paste0("Significantly Differentiated Genes:\n",subtitle_in)
+  pf = p + ggtitle(full_title)
+  
+  # save and print venn diagram
+  print(pf)
+  fpath=paste0(output_dir,"venndiagram_",subtitle,"_genes.pdf")
+  ggsave(fpath,pf)
+  
+  # find intersections
+  union_all=union(get(sample_sig_list[1]),get(sample_sig_list[2]))
+  length(union_all)
+  
+  in_all=intersect(get(sample_sig_list[1]),get(sample_sig_list[2]))
+  length(in_all)
+  
+  cross_12=setdiff(intersect(get(sample_sig_list[1]),get(sample_sig_list[2])),in_all)
+  length(cross_12)
+  
+  only_1=setdiff(get(sample_sig_list[1]),in_all)
+  only_1=setdiff(only_1,cross_12)
+  length(only_1)
+  
+  only_2=setdiff(get(sample_sig_list[2]),in_all)
+  only_2=setdiff(only_2,cross_12)
+  length(only_2)
+  
+  # create dual sig df
+  
+  # create df
+  venn_df=data.frame(union_all)
+  venn_df$status=""
+  venn_df$status[venn_df$union_all %in% in_all]="sig_all"
+  venn_df$status[venn_df$union_all %in% cross_12]=paste0("sig_",sample_list[1],"_and_",sample_list[2])
+  venn_df$status[venn_df$union_all %in% only_1]=paste0("sig_",sample_list[1])
+  venn_df$status[venn_df$union_all %in% only_2]=paste0("sig_",sample_list[2])
+  head(venn_df)
+  
+  # write out df
+  fpath=paste0(output_dir,"venn_diagram_significance_",subtitle,".csv")
+  write.csv(venn_df,fpath)
+}
+
+################################################################################
+# GSEA
+################################################################################
+# load necessary files for mus musculus
+LOAD_KEGG_MMU_FILES<-function(){
+  #https://cran.r-project.org/web/packages/pathfindR/vignettes/intro_vignette.html
+  #https://cran.r-project.org/web/packages/pathfindR/vignettes/obtain_data.html
+  ## Save both as RDS/SIF files for later use
+  RDS_genes=paste0("~/../../Volumes/ccbr1238/scripts/mmu_kegg_genes.RDS")
+  RDS_desc=paste0("~/../../Volumes/ccbr1238/scripts/mmu_kegg_descriptions.RDS")
+  
+  # check both RDS files have been created; if not create them
+  if (!file.exists(RDS_genes) || !file.exists(RDS_genes)){
+    print("Creating RDS files")
+    gsets_list <- get_gene_sets_list(source = "KEGG",org_code = "mmu")
+    
+    mmu_kegg_genes <- gsets_list$gene_sets
+    mmu_kegg_descriptions <- gsets_list$descriptions
+    
+    saveRDS(mmu_kegg_genes, RDS_genes)
+    saveRDS(mmu_kegg_descriptions, RDS_desc)
+  }
+  
+  # load the files
+  if (file.exists(RDS_genes) & file.exists(RDS_genes) & file.exists(SIF_PIN)){
+    print("Loading RDS files")
+    mmu_kegg_genes <- readRDS(RDS_genes)
+    mmu_kegg_descriptions <- readRDS(RDS_desc)
+  } else{
+    print("Error creating RDS files")
+    exit()
+  }
+}
+
+# set the annotation dbs
+DB_LOOKUP<-function(t2g,species_in){
+  # t2g=db_id; species_in=species_in
+  # generate gene lists for C1
+  # generate gene lists for C2 with subtypes biocarta, kegg, reactome, wiki
+  # generate gene lists for C5 with subtypes MF, BP, CC
+  # generate gene lists for Hallmark
+  if (t2g=="C1"){
+    db_out=msigdbr(species = species_in, category = "C1") %>% 
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="C2:BIOCARTA"){
+    db_out=msigdbr(species = species_in, category = "C2", subcategory = "BIOCARTA") %>% 
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="C2:KEGG"){
+    db_out=msigdbr(species = species_in, category = "C2", subcategory = "KEGG") %>% 
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="C2:REACTOME"){
+    db_out=msigdbr(species = species_in, category = "C2", subcategory = "REACTOME") %>%
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="C2:WIKIPATHWAYS"){
+    db_out=msigdbr(species = species_in, category = "C2", subcategory = "WIKIPATHWAYS") %>%
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="C5:MF"){
+    db_out=msigdbr(species = species_in,  category = "C5", subcategory = "GO:MF") %>%
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="C5:BP"){
+    db_out=msigdbr(species = species_in,  category = "C5", subcategory = "GO:BP") %>%
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="C5:CC"){
+    db_out=msigdbr(species = species_in,  category = "C5", subcategory = "GO:CC") %>%
+      dplyr::select(gs_name,ensembl_gene)
+  } else if (t2g=="H"){
+    db_out=msigdbr(species = species_in, category = "H") %>% 
+      dplyr::select(gs_name,ensembl_gene)  
+  } else{
+    print("DB does not exist. Please review")
+  }
+  
+  return(db_out)
+}
+
+# GSEA needs ENTREZids, this converts ENSEMBL to ENTREZ
+CAPTURE_ENTREZids<-function(input_df){
+  #input_df=deg_df_sub
+  
+  # search for ENTREZ by ENSEMBL
+  gene_df_e <- bitr(input_df[,c("ENSEMBL")], fromType = "ENSEMBL",
+                    toType = c("ENTREZID"),
+                    OrgDb = get(species_db))
+  
+  # if any genes did not map, try by SYMBOL
+  missing_df=subset(input_df,ENSEMBL %ni% gene_df_e$ENSEMBL)
+  if (nrow(missing_df)>0){
+    gene_df_s <- bitr(input_df[,c("SYMBOL")], fromType = "SYMBOL",
+                      toType = c("ENTREZID"),
+                      OrgDb = get(species_db))
+    
+    # merge dfs together
+    gene_output=merge(gene_df_e,gene_df_s,all=TRUE,by="ENTREZID")
+    
+  }
+  
+  # remove duplicated ENSEMBL ID's that have a gene symbol
+  dup_list=gene_output[duplicated(gene_output$ENSEMBL),]
+  filter_list=dup_list[is.na(dup_list$SYMBOL),]$ENTREZID
+  gene_output2=subset(gene_output, ENTREZID %ni% filter_list)
+  
+  # fill in missing gene symbols
+  filter_list=gene_output2[is.na(gene_output2$SYMBOL),]
+  for (i in rownames(filter_list)){
+    eid=filter_list[i,"ENSEMBL"]
+    #pull symbol from deg
+    gene_output2[i,"SYMBOL"]=unique(subset(input_df,ENSEMBL==eid)$SYMBOL)
+  }
+  
+  # fill in missing ENSEMBL
+  filter_list=gene_output2[is.na(gene_output2$ENSEMBL),]
+  for (i in rownames(filter_list)){
+    sym=filter_list[i,"SYMBOL"]
+    #pull symbol from deg
+    gene_output2[i,"ENSEMBL"]=subset(input_df,SYMBOL==sym)$ENSEMBL[1]
+  }
+  
+  #remove dups
+  output_df=gene_output2[!duplicated(gene_output2[,c("ENSEMBL")]),]
+  
+  # rename cols to match deg
+  colnames(output_df)=c("ENTREZID","ENSEMBL","SYMBOL")
+  return(output_df)
+}
+
+CAPTURE_KEGGids<-function(input_df){
+  #input_df=deg_anno_df
+  
+  # search for ENTREZ by ENSEMBL
+  gene_df_e <- bitr_kegg(geneID = input_df$ENTREZID, 
+                         fromType='ncbi-geneid', toType='kegg', organism=species_short)
+  
+  #remove dups
+  output_df=gene_df_e[!duplicated(gene_df_e[,c("kegg")]),]
+  
+  # rename cols to match deg
+  colnames(output_df)=c("ENTREZID","KEGG")
+  return(output_df)
+}
+
+CAPTURE_ENSEMBLids<-function(input_df){
+  # change result to list 
+  entrez_list=""
+  for (rowid in rownames(input_df)){
+    entrez_list=append(entrez_list,
+                       strsplit(input_df[rowid,"core_enrichment"],"[/]")[[1]])
+  }
+  entrez_list
+  
+  # deduplicate list
+  entrez_list=entrez_list[!duplicated(entrez_list)]
+  
+  # create df
+  gene_df=data.frame(entrez_list)
+  colnames(gene_df)=c("ENTREZID")
+  head(gene_df)
+  
+  # search for ENTREZ by ENSEMBL
+  gene_df_e <- bitr(gene_df[,c("ENTREZID")], fromType = "ENTREZID",
+                    toType = c("ENSEMBL"),
+                    OrgDb = get(species_db))
+  
+  # sub the original ENTREZIDs with ENSEMBLids
+  input_df$core_enrichment=gsub("/",";",input_df$core_enrichment)
+  for (rowid in rownames(gene_df_e)){
+    ezid=gene_df_e[rowid,"ENTREZID"]
+    eid=gene_df_e[rowid,"ENSEMBL"]
+    
+    input_df$core_enrichment=gsub(ezid,eid,input_df$core_enrichment)
+  }
+  return(input_df)
+}
+
+CAPTURE_GENEids<-function(input_df){
+  # input_df=t2g_df
+  
+  # create list of E'IDS
+  eid_list=input_df$EIDS_included
+  
+  # collapse list, take unique values
+  tmp_collapsed_list=paste0(unlist(eid_list),collapse=";")
+  tmp_collapsed_list=as.list(unique(strsplit(tmp_collapsed_list, ";"))[[1]])
+  length(tmp_collapsed_list)
+  tmp_unique_list=tmp_collapsed_list[!duplicated(tmp_collapsed_list)]
+  length(tmp_unique_list)  
+  
+  # create df
+  tmp_df=as.data.frame(do.call(rbind,tmp_unique_list))
+  
+  # convert to SYMBOL
+  df_annotated=bitr(tmp_df[,c("V1")], fromType = "ENSEMBL",
+                    toType = c("SYMBOL"),
+                    OrgDb = get(species_db))
+  
+  # replace EIDs with SYMBOL
+  for (rid in rownames(df_annotated)){
+    eid_list=gsub(df_annotated[rid,"ENSEMBL"],df_annotated[rid,"SYMBOL"],eid_list)
+  }
+  input_df$EIDS_included=eid_list
+  
+  return(input_df)
+}
+
+# run GSEA analysis
+RUN_GSEA_ANALYSIS<-function(gsea_genelist,t2g,anno_db){
+  # gsea_genelist=ranked_list; t2g=db_id; 
+  # run GSEA
+  if (t2g=="C2:KEGG"){
+    if (species_in=="Mus musculus"){
+      result=GSEA(geneList=gsea_genelist,
+                  pvalueCutoff = padj_cutoff,
+                  eps=0,
+                  pAdjustMethod = "BH",
+                  TERM2GENE = anno_db)
+    } else{
+      #https://yulab-smu.top/biomedical-knowledge-mining-book/clusterprofiler-kegg.html
+      result=gseKEGG(geneList=gsea_genelist,
+                     pvalueCutoff=padj_cutoff,
+                     eps=0,
+                     pAdjustMethod="BH", 
+                     organism=species_short,
+                     verbose=FALSE,
+                     keyType="ncbi-geneid")
+    }
+  } else if (t2g=="C2:REACTOME"){
+    #https://yulab-smu.top/biomedical-knowledge-mining-book/reactomepa.html
+    result=gsePathway(gene=gsea_genelist, 
+                      pvalueCutoff = padj_cutoff,
+                      eps=0,
+                      pAdjustMethod = "BH", 
+                      verbose = FALSE)
+    
+  } else if (t2g=="C2:WIKIPATHWAYS"){
+    #https://yulab-smu.top/biomedical-knowledge-mining-book/wikipathways-analysis.html
+    result=gseWP(gene=gsea_genelist, 
+                 pvalueCutoff = padj_cutoff,
+                 eps=0,
+                 pAdjustMethod = "BH",
+                 organism=species_in)
+    
+  } else if ((t2g=="C5:MF") | (t2g=="C5:BP") | (t2g=="C5:CC")){
+    #https://yulab-smu.top/biomedical-knowledge-mining-book/clusterprofiler-go.html
+    ont_id=strsplit(t2g,":")[[1]][2]
+    result=gseGO(geneList=gsea_genelist,
+                 pvalueCutof = padj_cutoff,
+                 eps=0,
+                 pAdjustMethod = "BH",
+                 OrgDb= get(species_db),
+                 ont=ont_id,
+                 verbose= FALSE)
+    
+  } else if ((t2g=="C1") | (t2g=="C2:BIOCARTA") | (t2g=="H")){
+    pulled_db=DB_LOOKUP(t2g)
+    result=GSEA(geneList=gsea_genelist,
+                pvalueCutoff = padj_cutoff,
+                eps=0,
+                pAdjustMethod = "BH",
+                TERM2GENE = pulled_db)
+  } else {
+    print (paste0(t2g, ": DB selected is not valid"))
+  }
+  
+  return(result)
+}
+
+# create plots
+CREATE_FGSEA_PLOTS<-function(t2g,result_in,ranked_list,msigdbr_list){
+  # run pathway analysis
+  topPathwaysUp <- result_in[ES > 0][head(order(pval), n=5), pathway]
+  topPathwaysDown <- result_in[ES < 0][head(order(pval), n=5), pathway]
+  
+  # generate plots, DT's for up and down
+  path_name=str_wrap(gsub("_"," ",topPathwaysUp[1]), width = 30)
+  p1 = plotEnrichment(msigdbr_list[[topPathwaysUp[1]]], ranked_list) + 
+    labs(title=paste0("Up-regulated\n",path_name),cex=.5)
+  path_name=str_wrap(gsub("_"," ",topPathwaysDown[1]), width = 30)
+  p2 = plotEnrichment(msigdbr_list[[topPathwaysDown[1]]], ranked_list) + 
+    labs(title=paste0("Down-regulated\n",path_name))
+  title1=text_grob(paste0("Top pathways for ", t2g), size = 15, face = "bold")
+  grid.arrange(
+    p1,p2,
+    top=title1,
+    nrow=1
+  )
+}
+
+CREATE_GSEA_PLOTS<-function(t2g,result_in){
+  # t2g=db_id; result_in=gseaRes
+  # create dot plots for all DB, ridgeplots for specific DB's
+  if(nrow(result_in)==0){
+    pf = ggparagraph( paste0("\n\n\n No Sig Results for GSEA:",t2g,
+                             "\n-",contrast_id), 
+                      size = 20, face = "bold")
+  } else{
+    p1 = dotplot(result_in,
+                 title=paste0(contrast_id,"\nGSEA:",t2g),
+                 font.size = 6, showCategory=2, split=".sign",orderBy="p.adjust") +
+      facet_grid(.~.sign)
+    p2 = ridgeplot(result_in, label_format = 30, showCategory = 4, orderBy="p.adjust") +
+      labs(x = "Enrichment distribution for top 5 pathways") + 
+      theme(text = element_text(size=6),
+            axis.text.x = element_text(size=6),
+            axis.text.y = element_text(size=5.5))
+    pcol <- cowplot::plot_grid(
+      p1 + theme(legend.position="none"),
+      p2 + theme(legend.position="none"),
+      nrow = 2
+    )
+    legend<-get_legend(p1)
+    pf=cowplot::plot_grid(pcol,legend,rel_widths = c(3, .4))
+  }
+  print(pf)
+  
+  fpath=paste0(output_dir,"gsea_plots_",t2g,"_",contrast_id,".png")
+  ggsave(fpath,pf)
+}
+
+# create output dt that summarized pathways
+OUTPUT_GSEA_FGSEA_DF<-function(result_in,db_id,analysis_type){
+  # result_in=fgseaRes; analysis_type="fgsea"
+  # result_in=gseaRes; analysis_type="gsea"
+  t2g_df=as.data.frame(result_in)
+  
+  # if there are pathways identified, analyze
+  if (nrow(t2g_df)>0){
+    # separate cols for gsea
+    if (analysis_type=="gsea"){
+      t2g_df=t2g_df %>% 
+        separate(leading_edge,
+                 c("percent_included","percent_list","percent_signal"),
+                 sep=", ")
+      # remove value= in cols
+      t2g_df$percent_included=sub("tags=","",t2g_df$percent_included)
+      t2g_df$percent_list=sub("list=","",t2g_df$percent_list)
+      t2g_df$percent_signal=sub("signal=","",t2g_df$percent_signal)
+      
+      # convert the ENTREZids with ENSEMBLids
+      if (db_id!="C2:KEGG"){
+        t2g_df=CAPTURE_ENSEMBLids(t2g_df)
+      }
+      
+      # determine length
+      t2g_df$N_total=round(as.numeric(t2g_df$setSize)/(as.numeric(gsub("%","",
+                                                                       t2g_df$percent_included))/100))
+      colnames(t2g_df)
+      
+      # collapse EIDs
+      for (rowid in rownames(t2g_df)){
+        t2g_df[rowid,"core_enrichment"]=paste(t2g_df[rowid,"core_enrichment"][[1]],collapse = ';')
+      }
+      t2g_df$core_enrichment=gsub("\\/",";",t2g_df$core_enrichment)
+      
+      # subset cols
+      select_cols=c("Description","p.adjust","enrichmentScore","NES",
+                    "setSize","N_total","core_enrichment")
+      t2g_df_sub=t2g_df[,select_cols]
+      
+      # rename cols
+      select_cols=c("pathway","padj","ES","NES",
+                    "N_included","N_total","EIDS_included")
+      colnames(t2g_df_sub)=select_cols
+      head(t2g_df_sub)
+      
+      # set values to round
+      round_cols=c("padj","ES","NES")
+      
+    } else{
+      # calculate number of genes in set
+      t2g_df$set_total=sapply(t2g_df$leadingEdge,length)
+      
+      # collapse the EIDS
+      for (rowid in rownames(t2g_df)){
+        t2g_df[rowid,"EIDS_included"]=paste(unlist(t2g_df[rowid,"leadingEdge"]),
+                                            collapse = ';')
+      }
+      
+      # subset cols
+      select_cols=c("pathway","padj","ES","NES","set_total","size","EIDS_included")
+      t2g_df_sub=t2g_df[,select_cols]
+      
+      # rename cols
+      select_cols=c("pathway","padj","ES","NES","N_included","N_total","EIDS_included")
+      colnames(t2g_df_sub)=select_cols
+      
+      # set values to round
+      round_cols=c("padj","ES","NES")
+    }
+    
+    #round cols
+    for (colid in round_cols){
+      t2g_df_sub[,colid]=signif(t2g_df_sub[,colid], digits=3)
+    }
+    
+    # replace EID's with gene symbols
+    t2g_df_sub=CAPTURE_GENEids(t2g_df_sub)
+    
+    # set other params
+    t2g_df_sub$annotation_db=db_id
+    t2g_df_sub$significance="N"
+    t2g_df_sub$significance[t2g_df_sub$padj<padj_cutoff]="Y"
+    
+    # calculate percent genes included
+    t2g_df_sub$N_total=as.numeric(t2g_df_sub$N_total)
+    t2g_df_sub$percent_included=(t2g_df_sub$N_included/t2g_df_sub$N_total)*100
+    t2g_df_sub$percent_included=signif(t2g_df_sub$percent_included, digits=2)
+    head(t2g_df_sub)
+    
+    # sort by p.adjust
+    output_df=t2g_df_sub[order(t2g_df_sub$padj),]
+    
+    # reorder cols
+    select_cols=c("significance","annotation_db","pathway","padj",
+                  "ES","NES","N_included","N_total","percent_included",
+                  "EIDS_included")
+    t2g_df_sub=t2g_df_sub[,select_cols]
+  } else{
+    t2g_df_sub="No Significant Genes"
+  }
+  return(t2g_df_sub)
+}
+
+# main function
+MAIN_FGSEA_GSEA_ANALYSIS<-function(contrast_id,db_list){
+  # contrast_id="SH1_0pt5mM-SCR_0pt5mM"; db_id=db_list[4]
+  print(paste0("--working on ", contrast_id))
+  
+  # read in deg df
+  fpath=paste0(output_dir,"DEG_",contrast_id,".csv")
+  deg_df=read.csv(fpath)
+  
+  # change inf to highest or lowest values
+  # https://www.biostars.org/p/276783/
+  deg_df$gsea_ranking_score[deg_df$gsea_ranking_score=="-Inf"]="toolow"
+  deg_df$gsea_ranking_score[deg_df$gsea_ranking_score=="Inf"]="toohigh"
+  
+  gsea_num_list=as.numeric(deg_df$gsea_ranking_score)
+  gsea_num_list=gsea_num_list[!is.na(gsea_num_list)]
+  
+  deg_df$gsea_ranking_score[deg_df$gsea_ranking_score=="toolow"]=min(gsea_num_list)
+  deg_df$gsea_ranking_score[deg_df$gsea_ranking_score=="toohigh"]=max(gsea_num_list)
+  deg_df$gsea_ranking_score=as.numeric(deg_df$gsea_ranking_score)
+  range(deg_df$gsea_ranking_score)
+  
+  # prep df
+  deg_df_sub=deg_df %>% 
+    separate("ensembleID",c("ENSEMBL","ID"),sep="[.]")
+  
+  ## add entrezIDS for GSEA, KEGGids for GSEA
+  gene_ref_db=CAPTURE_ENTREZids(deg_df_sub)
+  deg_anno_df=merge(gene_ref_db,deg_df_sub,by="SYMBOL")
+  gene_ref_db=CAPTURE_KEGGids(deg_anno_df)
+  deg_anno_df=merge(gene_ref_db,deg_anno_df,by="ENTREZID")
+  head(deg_anno_df)
+  
+  # sort df by score
+  deg_df_sort=deg_anno_df[order(deg_anno_df$log2fc,decreasing=TRUE),]
+  colnames(deg_df_sort)=gsub("[.]y","",colnames(deg_df_sort))
+  head(deg_df_sort)
+  
+  # create ranked list
+  ranked_list=deg_df_sort$log2fc
+  
+  # pull db and generate pathways
+  merged_fgsea_df=data.frame()
+  merged_gsea_df=data.frame()
+  
+  # db_id=db_list[1]
+  for (db_id in db_list){
+    print(paste0("----processing ", db_id))
+    anno_db=DB_LOOKUP(db_id,species_in)
+    msigdbr_list=split(anno_db$ensembl_gene,anno_db$gs_name)
+    
+    # run fgsea, plot, and merge df
+    # https://cran.r-project.org/web/packages/msigdbr/vignettes/msigdbr-intro.html
+    # https://bioconductor.org/packages/release/bioc/vignettes/fgsea/inst/doc/fgsea-tutorial.html
+    names(ranked_list)=as.character(deg_df_sort$ENSEMBL)
+    fgseaRes <- fgsea(msigdbr_list, ranked_list,minSize  = minSize_gene_set)
+    CREATE_FGSEA_PLOTS(db_id,fgseaRes,ranked_list,msigdbr_list)
+    merged_fgsea_df=rbind(merged_fgsea_df,
+                          OUTPUT_GSEA_FGSEA_DF(fgseaRes,db_id,analysis_type="fgsea"))
+    head(merged_fgsea_df)
+    
+    # run gsea, plot and merge df
+    if (db_id=="C2:KEGG"){
+      names(ranked_list)=as.character(deg_df_sort$ENSEMBL)
+    } else{
+      names(ranked_list)=as.character(deg_df_sort$ENTREZID)
+    }
+    gseaRes <- RUN_GSEA_ANALYSIS(ranked_list,db_id,anno_db)
+    CREATE_GSEA_PLOTS(db_id,gseaRes)
+    merged_gsea_df=rbind(merged_gsea_df,
+                         OUTPUT_GSEA_FGSEA_DF(gseaRes,db_id,analysis_type="gsea"))
+    head(merged_gsea_df)
+    
+    # breakpoint for the select_pathway function versus standard analysis
+    #https://stephenturner.github.io/deseq-to-fgsea/
+  }
+  
+  # sort and output top 10 pathways
+  output_fgsea_df=merged_fgsea_df[order(merged_fgsea_df$padj),][1:10,]
+  output_gsea_df=merged_gsea_df[order(merged_gsea_df$padj),][1:10,]
+  
+  # clean output dt
+  merged_fgsea_df$pathway=gsub("GOMF_||GOBP_||GOCC_||KEGG_","",merged_fgsea_df$pathway)
+  merged_gsea_df$pathway=gsub("GOMF_||GOBP_||GOCC_||KEGG_","",merged_gsea_df$pathway)
+  
+  # save top pathway info, print DT
+  caption_title=paste0("Top 10 pathways across all annotation databases for FGSEA ", contrast_id)
+  DT::datatable(output_fgsea_df, extensions = 'Responsive', 
+                caption=htmltools::tags$caption(paste0(caption_title),
+                                                style="color:gray; font-size: 18px" ),
+                rownames=F)
+  fpath=paste0(output_dir,"GO_KEGG_pathways_fgsea_",contrast_id,".csv")
+  write.table(merged_fgsea_df,fpath,sep=",",row.names = FALSE)
+  
+  caption_title=paste0("Top 10 pathways across all annotation databases for GSEA ", contrast_id)
+  DT::datatable(output_gsea_df, extensions = 'Responsive', 
+                caption=htmltools::tags$caption(paste0(caption_title),
+                                                style="color:gray; font-size: 18px" ),
+                rownames=F)
+  fpath=paste0(output_dir,"GO_KEGG_pathways_gsea_",contrast_id,".csv")
+  write.table(merged_gsea_df,fpath,sep=",",row.names = FALSE)
+  
+}
+
+######################################################################
+# functions secondary pathway analysis
+######################################################################
+# creates heatmap formatted df with only log2fc values
+create_heatmap_df<-function(df_in,extra_filter=""){
+  df_out=dplyr::select(df_in,contains("log"))
+  
+  # cleanup col names
+  output_list=sub('--log2FoldChange', '',colnames(df_out))
+  cntrl=strsplit(output_list,"_vs_")
+  for (ct in cntrl){
+    output_list=sub(ct[2], '',output_list)
+    output_list=sub('_vs_', '',output_list)
+  }
+  
+  # use extra filter
+  if (extra_filter != ""){
+    output_list=sub(extra_filter, '',output_list)
+  }
+  
+  colnames(df_out)=output_list
+  return(df_out)
+}
+
+# creates df of log2fc and pvalues
+create_output_df<-function(df_in,n_in,extra_filter=""){
+  output_list=colnames(df_in)
+  
+  # split treat from control
+  cntrl=strsplit(output_list,"_vs_")
+  for (ct in cntrl){
+    metric=strsplit(ct[2],"--")[[1]][2]
+    output_list=sub(ct[2], paste0("_",metric),output_list)
+    output_list=sub('_vs_', '',output_list)
+  }
+  
+  # cleanup col names
+  output_list=sub('log2FoldChange', 'log2FC',output_list)
+  
+  # use extra filter
+  extra_filter="_without_IFNb"
+  if (extra_filter != ""){
+    output_list=sub(extra_filter, '',output_list)
+  }
+  
+  colnames(df_in)=output_list
+  
+  # round df
+  for (colid in colnames(df_in)){
+    df_in[,colid]=signif(df_in[,colid], digits=3)
+  }
+  
+  # if number of pathways is less than n_in, adjust
+  if (nrow(df_in)<n_in){
+    n_in=nrow(df_in)
+  }
+  
+  # print out table
+  caption_title=paste0("Expression values for ",n_in," genes")
+  p = DT::datatable(df_in, extensions = 'Responsive', 
+                    caption=htmltools::tags$caption(paste0(caption_title) ,
+                                                    style="color:gray; font-size: 18px" ))
+  return(p)
+}
+
+# creates heatmap
+generate_heat_map<-function(df_in,show_names="ON",title_in="",cluster_by_rows="ON",fpath=""){
+  
+  ####################
+  # formatting
+  #####################
+  # Overwrite pheatmaps default draw_colnames with new version
+  assignInNamespace(x="draw_colnames", value="draw_colnames_45",ns=asNamespace("pheatmap")) 
+  
+  # Heatmap Color Gradients 
+  paletteLength <- 1000
+  mycolors <- colorRampPalette(c("blue","white","red"), interpolate = "linear")(paletteLength)
+  
+  ####################
+  # metadata
+  ####################
+  # Creating Dataframe to map samplenames to groups
+  meta = groups_df
+  groups <- data.frame(as.factor(meta$group))
+  colnames(groups) <- "Groups"
+  rownames(groups) <- meta$sampleid
+  
+  # Creating Group Column Annotation Colors
+  columnColors <- c("lightpink","lightblue","orange","purple","red","green")
+  names(columnColors) <- unique(groups$Groups)
+  anno_colors <- list(Groups = columnColors)
+  
+  # set title
+  if(title_in==""){
+    title_in=paste0("Significant Genes (N=",nrow(df_in),")")
+  }
+  ####################
+  # function
+  ####################
+  if (show_names=="OFF" && cluster_by_rows=="ON"){
+    p=pheatmap(df_in, 
+               scale = "none", main=title_in,
+               cellwidth = 30, fontsize = 12, fontsize_row = 7, fontsize_col = 8, color = mycolors, 
+               border_color = "NA",cluster_cols=F,annotation_colors = anno_colors, show_rownames = FALSE)
+  } else if (show_names=="ON" && cluster_by_rows=="ON") {
+    p=pheatmap(df_in, 
+               scale = "none", main=title_in,
+               cellwidth = 30, fontsize = 12, fontsize_row = 5, fontsize_col = 8, color = mycolors, 
+               border_color = "NA",cluster_cols=F,annotation_colors = anno_colors, show_rownames = TRUE)
+  } else if (show_names=="OFF" && cluster_by_rows=="OFF") {
+    p=pheatmap(df_in, 
+               scale = "none", main=title_in,
+               cellwidth = 30, fontsize = 12, fontsize_row = 7, fontsize_col = 8, color = mycolors, 
+               border_color = "NA",cluster_cols=F,cluster_rows=F,annotation_colors = anno_colors, 
+               show_rownames = FALSE)
+  }
+  if (fpath==""){
+    fpath=paste0(img_dir,"heatmap_",contrast_id,".pdf")
+  }
+  save_pheatmap_pdf(p, fpath)
+}
+
+# creates heatmap for multiple replicates
+generate_replicate_heatmaps<-function(contrast_id,peak_type,scale,gene_list_subset="",sample_subset=""){
+  # split contrast
+  contrast_1=strsplit(contrast_id,"_vs_")[[1]][1]
+  contrast_2=strsplit(contrast_id,"_vs_")[[1]][2]
+  
+  # define extension
+  contrast_extension=paste0(contrast_id,"__",dedup_status,"__",peak_type,"_peaks.bed")
+  
+  # read in counts matrix
+  fpath=paste0(output_car_dir,"DESEQ_norm_counts_",contrast_id,".csv")
+  counts_matrix=read.csv(fpath)
+  head(counts_matrix)
+  colnames(counts_matrix)=c("peakID",colnames(counts_matrix)[2:ncol(counts_matrix)])
+  
+  # replace X at the beginning of cols
+  colnames(counts_matrix)=gsub("X","",colnames(counts_matrix))
+  head(counts_matrix)
+  
+  # subset for samples, if needed
+  if (length(sample_subset)>1){
+    sample_list=sample_subset
+    counts_matrix=counts_matrix[,c("peakID",sample_list)]
+  } else{
+    sample_list=subset(groups_df,group%in% c(contrast_1,contrast_2))$sampleid
+  }
+  
+  # add annotation information
+  fpath=paste0(output_car_dir,"peak_annotation_",contrast_id,".csv")
+  peak_df=read.csv(fpath)[,c("peakID","SYMBOL","shortAnno")]
+  head(peak_df)
+  counts_matrix_anno=merge(counts_matrix,peak_df,by="peakID")
+  head(counts_matrix_anno)
+  
+  # pull rowname
+  rownames(counts_matrix_anno)=counts_matrix_anno$peakID
+  counts_matrix=counts_matrix_anno[,2:ncol(counts_matrix_anno)]
+  head(counts_matrix_anno)
+  
+  # read in sig gene list
+  fpath=paste0(output_dir,"deeptools_sig_",contrast_id,".csv")
+  deeptools_gene_list=read.csv(fpath)$x
+  head(deeptools_gene_list)
+  
+  # subset for gene list
+  counts_matrix_subset=subset(counts_matrix_anno,SYMBOL %in% deeptools_gene_list)
+  
+  # subset for non-distal annotated peaks
+  counts_matrix_subset=subset(counts_matrix_subset,shortAnno!="Distal")
+  
+  # if needed, subset for immune gene list
+  if (length(gene_list_subset)>1){
+    print("Subsetting based on gene_list provided")
+    counts_matrix_subset=subset(counts_matrix_subset,SYMBOL %in% gene_list_subset)
+    
+    print(paste0("Total number of peaks: ", nrow(counts_matrix_subset)))
+    print(paste0("Total number unique genes: ", length(unique(counts_matrix_subset$SYMBOL))))
+    
+    # keep only one instance per symbol
+    counts_matrix_subset=counts_matrix_subset[!duplicated(counts_matrix_subset$SYMBOL), ]
+    print(paste0("Total number of peaks after subsetting only unique genes: ", nrow(counts_matrix_subset)))
+    
+    # rename rows for printing
+    rownames(counts_matrix_subset)=make.unique(paste0(counts_matrix_subset$SYMBOL," (",counts_matrix_subset$shortAnno,")"))
+  } else{
+    print(paste0("Total number of peaks: ", nrow(counts_matrix_subset)))
+    print(paste0("Total number unique genes: ", length(unique(counts_matrix_subset$SYMBOL))))
+  }
+  
+  # scale if necessary
+  if (scale=="ON"){
+    print("performing scaling")
+    # ztransform df
+    counts_matrix_complete=t(scale(t(counts_matrix_subset[,sample_list])))
+    (head(counts_matrix_complete))
+  } else{
+    print("no scaling will be performed")
+    (head(counts_matrix_subset[,sample_list]))
+    counts_matrix_complete=counts_matrix_subset[,sample_list]
+  }
+  
+  # define output name, run heatmap
+  if (scale=="ON"){
+    fpath=paste0(img_dir,"heatmap_withscale_")
+  } else{
+    fpath=paste0(img_dir,"heatmap_withoutscale_")
+  }
+  if (length(gene_list_subset)>1){
+    fpath=paste0(fpath,"subset_",gene_list_name,"_",contrast_id,".pdf")
+    print(fpath)
+    
+    # generate heatmap
+    generate_heat_map(counts_matrix_complete,
+                      show_names="ON",
+                      title_in="",
+                      cluster_by_rows="ON",
+                      fpath=fpath)
+  } else{
+    fpath=paste0(fpath,contrast_id,".pdf")
+    
+    # generate heatmap
+    generate_heat_map(counts_matrix_complete,
+                      show_names="OFF",
+                      title_in="",
+                      cluster_by_rows="ON",
+                      fpath=fpath)
+  }
+}
+
+# creates heatmap for multiple replicates in RNASeq data
+generate_replicate_heatmaps_rna<-function(contrast_id,scale_flag,gene_list_subset="",sample_subset=""){
+  # split contrast
+  contrast_1=strsplit(contrast_id,"_vs_")[[1]][1]
+  contrast_2=strsplit(contrast_id,"_vs_")[[1]][2]
+  
+  # read in counts matrix
+  counts_matrix=read.csv(paste0(input_dir,"DEG_ALL/RawCountFile_RSEM_genes_filtered.txt"),sep="\t")
+  head(counts_matrix)
+  
+  # split EID and SYMBOL
+  counts_matrix=separate(counts_matrix,col="symbol",into=c("EID","SYMBOL"),sep="[|]")
+  
+  # keep one gene
+  counts_matrix=counts_matrix %>% distinct(SYMBOL,.keep_all=TRUE)
+  head(counts_matrix)
+  
+  # subset for samples, if needed
+  if (length(sample_subset)>1){
+    sample_list=sample_subset
+    counts_matrix=counts_matrix[,c("SYMBOL",sample_list)]
+    print(head(counts_matrix))
+  } else{
+    sample_list=subset(groups_df,group%in% c(contrast_1,contrast_2))$sampleid
+  }
+  
+  # pull rowname
+  rownames(counts_matrix)=make.unique(counts_matrix$SYMBOL)
+  head(counts_matrix)
+  
+  # read in sig gene list
+  deeptools_gene_list=read.csv(car_deeptools)$x
+  head(deeptools_gene_list)
+  
+  # subset for gene list
+  counts_matrix_subset=subset(counts_matrix,SYMBOL %in% deeptools_gene_list)
+  
+  # if needed, subset for immune gene list
+  if (length(gene_list_subset)>1){
+    print("Subsetting based on gene_list provided")
+    counts_matrix_subset=subset(counts_matrix_subset,SYMBOL %in% gene_list_subset)
+    
+    # keep only one instance per symbol
+    #counts_matrix_subset=counts_matrix_subset[!duplicated(counts_matrix_subset$SYMBOL), ]
+    
+    # rename rows for printing
+    rownames(counts_matrix_subset)=make.unique(paste0(counts_matrix_subset$SYMBOL))
+  }
+  
+  # scale if necessary
+  if (scale_flag=="ON"){
+    print("performing scaling")
+    # ztransform df
+    x=t(counts_matrix_subset[,sample_list])
+    counts_matrix_complete=t(scale(x))
+    print(head(counts_matrix_complete))
+  } else{
+    print("no scaling will be performed")
+    (head(counts_matrix_subset[,sample_list]))
+    counts_matrix_complete=counts_matrix_subset[,sample_list]
+  }
+  
+  # remove na values
+  counts_matrix_complete=counts_matrix_complete[complete.cases(counts_matrix_complete), ]
+  
+  #output counts matrix
+  if (length(gene_list_subset)>1){
+    fpath=paste0(output_rna_dir,"heatmap_normcounts_",contrast_id,".txt")
+  } else{
+    fpath=paste0(output_rna_dir,"heatmap_normcounts_subset_",contrast_id,".txt")
+  }
+  write.csv(counts_matrix_complete,fpath)
+  
+  # define output name, run heatmap
+  if (scale_flag=="ON"){
+    fpath=paste0(img_dir,"heatmap_withscale_")
+  } else{
+    fpath=paste0(img_dir,"heatmap_withoutscale_")
+  }
+  if (length(gene_list_subset)>1){
+    fpath=paste0(fpath,"subset_",gene_list_name,"_",contrast_id,".pdf")
+    
+    # generate heatmap
+    generate_heat_map(counts_matrix_complete,
+                      show_names="ON",
+                      title_in="",
+                      cluster_by_rows="ON",
+                      fpath=fpath)
+  } else{
+    fpath=paste0(fpath,contrast_id,".pdf")
+    
+    # generate heatmap
+    generate_heat_map(counts_matrix_complete,
+                      show_names="OFF",
+                      title_in="",
+                      cluster_by_rows="ON",
+                      fpath=fpath)
+  }
+}
+
+#create heatmap and DT
+generate_heat_map_select<-function(select_deg,contras){
+  # prep df for heatmap generation
+  rownames(select_deg)=select_deg$ensid_gene
+  log_name=paste0(contras[1],"_vs_",contras[2],"--log2FoldChange")
+  p_name=paste0(contras[1],"_vs_",contras[2],"--padj")
+  select_deg=select_deg[,c("log2fc","fdr")]
+  colnames(select_deg)=c(log_name,p_name)
+  
+  # create heatmap df of sig genes in pathway list
+  sig_df=subset(select_deg, get(log_name) > log2fc_cutoff | get(log_name) < -log2fc_cutoff)
+  sig_df=subset(sig_df, get(p_name) < padj_cutoff )
+  heat_df=create_heatmap_df(sig_df,"")
+  
+  # run functions
+  generate_heat_map(heat_df)
+  p = create_output_df(select_deg,nrow(select_deg),"")
+  return(p)
+}
+
+# create gseaplot
+gsea_plus_plots_select<-function(deg,t2g,path_id,contras){
+  
+  # create GSEA genelist
+  gsea_genelist=PREP_GSEA_GL(deg,t2g=t2g)
+  
+  # run GSEA, save plots
+  result=gsea_plus_plot(gl=gsea_genelist,t2g=t2g,contrast_in=contras,select_flag="ON")
+  
+  #get rowname of pathway
+  result_df=as.data.frame(result)
+  rownames(result_df) <- NULL
+  row_id=as.numeric(rownames(subset(result_df,ID==path_id))[[1]])
+  path_desc=subset(result_df,ID==path_id)$Description[[1]]
+  
+  # create plot
+  p1=gseaplot(result, by = "all", title = paste0(path_id,": ",path_desc),
+              geneSetID =row_id)
+  pf=p1&theme(text = element_text(size=8),
+              axis.text.x = element_text(size=8),
+              axis.text.y = element_text(size=8),
+              axis.text =element_text(size=8),
+              axis.title=element_text(size=8,face="bold")) 
+  print(pf)
+}
+
+main_selectpath_function<-function(cntrl_in,treat_in,type_in,t2g,path_id){
+  t2g="C1"
+  type_in="GSEA"
+  path_id="chr18q21"
+  cntrl_in=cntrl
+  treat_in=treatment
+  
+  # set contrast
+  contras=c(treat_in,cntrl_in)
+  
+  # read in datatable created during GSEA/ORA plotting, get list of gene names in pathway selected
+  ttl_abbrev=sub(" ","_",sub(":","_",t2g))
+  fpath=paste0(output_rna_dir,type_in,"_",contras[1],"-",contras[2],"_table_",ttl_abbrev,".txt")
+  path_df=read.csv(fpath,sep="\t")
+  
+  #check pathway exists
+  if (nrow(subset(path_df,ID==path_id))==0){
+    stop(paste0("The selected pathway (",path_id,") does not exist in the annotation database (",t2g,
+                "). Please select a valid combination"))
+  }
+  
+  # create gene list from pathway
+  genes_in_pathway=strsplit(subset(path_df,ID==path_id)$core_enrichment,"/")[[1]]
+  
+  # read in created deg
+  fpath=paste0(output_rna_dir,"DESeq2_",contras[1],"-",contras[2],"_DEG_allgenes.txt")
+  deg=read.csv(fpath,header=TRUE,sep="\t")
+  
+  # subset deg for genes,
+  #convert ENTREZID if necessary
+  special_dbs=c("C1","C2:BIOCARTA","H")
+  if (t2g %ni% special_dbs){
+    gene_ref_db = CAPTURE_ENTREZids(deg)
+    genes_in_pathway=subset(gene_ref_db,ENTREZID %in% genes_in_pathway)$gene
+  } 
+  select_deg=subset(deg, gene %in% genes_in_pathway)
+  
+  # create heatmaps
+  p = generate_heat_map_select(select_deg,contras)
+  
+  # create gseaPlot
+  gsea_plus_plots_select(deg,t2g,path_id,contras)
+  
+  # return DT
+  return(p)
+}

@@ -1,0 +1,118 @@
+---
+title: "CCBR1238"
+author: "Samantha Sevilla"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+## Define parameters
+
+Set dirs
+```{r set_dir, echo=FALSE, warning=FALSE, include=FALSE}
+pipeliner_dir="~/../../Volumes/ccbr1238/rnaseq/123022_2/"
+output_dir="~/../../Volumes/ccbr1238/analysis_230227/"
+
+dir.create(file.path(output_dir), showWarnings = FALSE)
+```
+
+Set parameters
+```{r}
+species_in="Mus musculus"
+log2_cutoff=1.5
+fdr_cutoff=0.05
+padj_cutoff=0.05
+
+# set list of databases to use for GO and KEGG analysis
+# http://www.gsea-msigdb.org/gsea/msigdb/collections.jsp
+db_list=c("C5:MF","C5:BP","C5:CC","C2:KEGG")
+
+# Minimal size of a gene set to test. All pathways below the threshold are excluded.
+minSize_gene_set=15
+```
+
+Set contrasts
+```{r set_contrasts, echo=FALSE, warning=FALSE}
+fpath=paste0(pipeliner_dir,"groups.tab")
+groups_df=read.csv(fpath,sep="\t",header=FALSE)
+colnames(groups_df)=c("replicate","group","replicate2")
+head(groups_df)  
+
+contrasts_list=c("SH1_0pt5mM-SCR_0pt5mM",
+                 "SH4_0pt5mM-SCR_0pt5mM")
+
+contrasts_list=("SCR_4mM-SCR_0pt5mM")
+
+contrasts_list=("SH2_0pt5mM-SCR_0pt5mM")
+```
+
+Set pkgs
+```{r set_pkg, echo=FALSE, warning=FALSE, include=FALSE}
+if (species_in == "Homo sapiens"){
+  species_db="org.Hs.eg.db"
+  species_short="hsa"
+} else if (species_in == "Mus musculus"){
+  species_db="org.Mm.eg.db"
+  species_short="mmu"
+} else{
+    print("Species not approved")
+}
+
+# package list
+list.of.packages=c("BiocManager","tidyr","DT","RUVSeq","RColorBrewer","textshape",
+                   "pheatmap","grid","dplyr","EnhancedVolcano","edgeR","DESeq2","ggplot2","plotly",
+                   "msigdbr","clusterProfiler","ggpubr","ggridges","factoextra",
+                   "gplots","ReactomePA",species_db,"pander","ggVennDiagram","fgsea","stringr",
+                   "gridExtra")
+
+#install as needed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+# source functions
+source("~/../../Volumes/ccbr1238/scripts/ccbr1238_source_code.R")
+
+# load packages
+invisible(lapply(list.of.packages, library, character.only = TRUE))
+
+#negate
+`%ni%` <- Negate(`%in%`)
+```
+
+## Run Analysis
+
+Find differential differences between each of the contrasts
+```{r deg_prim, echo=FALSE,warning=FALSE, message=FALSE}
+for (contrast_id in contrasts_list){
+  PRIMARY_DIFFERENTIAL(contrast_id)
+}
+```
+
+Find the overlap between contrasts: SCR_vs_SH1 and SCR_vs_SH4
+```{r deg_o1, echo=FALSE,warning=FALSE, message=FALSE}
+compare_list=c(contrasts_list[1],
+               contrasts_list[2])
+subtitle="SH1,SH4"
+DUAL_VENN_DIAGRAM(compare_list_in = compare_list,
+                         subtitle_in = subtitle)
+```
+
+Run GSEA analysis for GO and KEGG pathways
+
+- http://www.gsea-msigdb.org/gsea/doc/GSEAUserGuideFrame.html
+
+- FGSEA and GSEA are both Gene Set Enrichment Analysis, reliant on a pre-ranking of gene lists prior to analysis. All genes are included (regardless of significance) and select databases were used to determine pathways that were enriched. While both methods may produce similar results, FGSEA is generally a stricter algorithm and may lose some of the pathways seen in the GSEA results. Regardless, both are commonly used in the field, and acceptable to produce these types of pathway reviews.
+
+- Paper discussing the benefits of FGSEA: https://www.biorxiv.org/content/10.1101/060012v1
+```{r gsea, echo=FALSE,warning=FALSE, message=FALSE}
+for (contrast_id in contrasts_list){
+  MAIN_FGSEA_GSEA_ANALYSIS(db_list=db_list,
+                           contrast_id=contrast_id)
+}
+```
+
+```{r}
+#SCR 0.5 (sample 3) vs GCN1 KD 0.5 SH1 (sample 5)
+#SCR 0.5 (sample 3) vs ATF4 KD 0.5 SH4 (sample 11)
+```
+

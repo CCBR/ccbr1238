@@ -136,10 +136,16 @@ MAIN_FGSEA_GSEA_ANALYSIS(db_list=db_list,
 - SH2 vs SH5 vs SCR at FC=1.25
 ```{r group_2, echo=FALSE,warning=FALSE, message=FALSE}
 log2_cutoff=1.25
+contrasts_list=c("SH2_0pt5mM-SCR_0pt5mM",
+                 "SH5_0pt5mM-SCR_0pt5mM",
+                 "SCR_4mM-SCR_0pt5mM")
+for (contrast_id in contrasts_list){
+  PRIMARY_DIFFERENTIAL(contrast_id)
+}
+
 GROUP_DIFFERENTIAL(group1_in="SH2_0pt5mM",
                    group2_in="SH5_0pt5mM",
                    control_in="SCR_0pt5mM")
-
 MAIN_FGSEA_GSEA_ANALYSIS(db_list=db_list,
                          contrast_id="SH2_0pt5mM_vs_SH5_0pt5mM")
 ```

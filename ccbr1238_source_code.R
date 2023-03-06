@@ -195,6 +195,7 @@ COMPARATIVE_VENN_DIAGRAM<-function(compare_list_in,subtitle_in){
   # for each of the contrasts, read in the DEG file and generate sig lists
   for (contrast_id in compare_list_in){
     sample_name=gsub("_0pt5mM-SCR_0pt5mM","",contrast_id)
+    sample_name=gsub("_4mM-SCR_0pt5mM","4",sample_name)
     print(paste0("** Processing ", sample_name," **"))
     
     # read DEG from primary differential
@@ -212,6 +213,7 @@ COMPARATIVE_VENN_DIAGRAM<-function(compare_list_in,subtitle_in){
   }
   # create a sample list
   sample_list=gsub("_0pt5mM-SCR_0pt5mM","",compare_list_in)
+  sample_list=gsub("_4mM-SCR_0pt5mM","4",sample_list)
   sample_sig_list=paste0(sample_list,"_siglist")
   
   # List of genes
@@ -355,6 +357,83 @@ DUAL_VENN_DIAGRAM<-function(compare_list_in,subtitle_in){
   # write out df
   fpath=paste0(output_dir,"venn_diagram_significance_",subtitle,".csv")
   write.csv(venn_df,fpath)
+}
+
+RUN_DESEQ2<-function(counts_in,sample_list){
+  # counts_in=filtered;
+  
+  # create groups df
+  sampleinfo=subset(groups_df,replicate %in% sample_list)[,c("replicate","group")]
+  head(sampleinfo)
+  colnames(sampleinfo)=c("sampleid","group")
+  sampleinfo$group=as.factor(sampleinfo$group)
+  
+  # run DESEQ
+  dds <- DESeqDataSetFromMatrix(countData = as.matrix(counts_in),
+                                colData = sampleinfo,
+                                design = ~ group)
+  dds <- DESeq(dds)
+  
+  return(dds)
+}
+
+GROUP_DIFFERENTIAL<-function(group1_in,group2_in,control_in){
+  
+  #group1_in="SH1_0pt5mM"; group2_in="SH4_0pt5mM"; control_in="SCR_0pt5mM"
+  
+  # set contrasts
+  contrast_1=paste0(group1_in,"-",control_in)
+  contrast_2=paste0(group2_in,"-",control_in)
+  group1_group2=paste0(group1_in,"_vs_",group2_in)
+  sample_list=subset(groups_df,group %in% c(group1_in,group2_in,control_in))$replicate
+  
+  # read in counts matrix
+  fpath=paste0(pipeliner_dir,"DEG_ALL/RawCountFile_RSEM_genes.txt")
+  rawcounts=read.csv(fpath,sep="\t")
+  colnames(rawcounts)=SHORTEN_NAMES(colnames(rawcounts),"_expected_count")
+  rownames(rawcounts)=rawcounts$symbol
+  head(rawcounts)
+  
+  # subset for groups
+  rawcounts=rawcounts[,c(sample_list)]
+  
+  # filter
+  filtered=ceiling(rawcounts)
+  cpm_counts=edgeR::cpm(as.matrix(filtered))
+  log_cpm_counts=log2(cpm_counts)
+  keep=rowSums(cpm_counts>0.5)>2
+  filtered=filtered[keep,]
+  head(filtered)
+  
+  # run DESEQ
+  dds=RUN_DESEQ2(filtered,sample_list)
+  
+  # pull out contrasts
+  # https://support.bioconductor.org/p/101494/
+  res <- as.data.frame(results(dds, contrast=c("group",group1_in,group2_in)))
+  res$merged_name=rownames(res)
+  
+  # split EID and gene, remove duplicate gene/symbol name
+  deg_df = res %>% separate(col=merged_name,
+                                            into=c("ensembleID","SYMBOL"),
+                                            sep="[|]")
+  
+  # determine sig
+  deg_df$significance="N"
+  deg_df$significance[abs(deg_df$log2FoldChange)>log2_cutoff & deg_df$padj<fdr_cutoff]="Y"
+  
+  # calculated gsea ranking score
+  deg_df$gsea_ranking_score=-log10(deg_df$pvalue)*sign(deg_df$log2FoldChange)
+  
+  # print out result
+  print(paste0("--the number of significant genes found: ",nrow(subset(deg_df,significance=="Y"))))
+  
+  # rename cols
+  colnames(deg_df)=gsub("log2FoldChange","log2fc",colnames(deg_df))
+  
+  # output df
+  fpath=paste0(output_dir,"DEG_",group1_group2,".csv")
+  write.csv(deg_df,fpath)
 }
 
 ################################################################################
@@ -643,7 +722,7 @@ CREATE_FGSEA_PLOTS<-function(t2g,result_in,ranked_list,msigdbr_list){
   )
 }
 
-CREATE_GSEA_PLOTS<-function(t2g,result_in){
+CREATE_GSEA_PLOTS<-function(t2g,result_in,contrast_id){
   # t2g=db_id; result_in=gseaRes
   # create dot plots for all DB, ridgeplots for specific DB's
   if(nrow(result_in)==0){
@@ -846,7 +925,7 @@ MAIN_FGSEA_GSEA_ANALYSIS<-function(contrast_id,db_list){
       names(ranked_list)=as.character(deg_df_sort$ENTREZID)
     }
     gseaRes <- RUN_GSEA_ANALYSIS(ranked_list,db_id,anno_db)
-    CREATE_GSEA_PLOTS(db_id,gseaRes)
+    CREATE_GSEA_PLOTS(db_id,gseaRes,contrast_id)
     merged_gsea_df=rbind(merged_gsea_df,
                          OUTPUT_GSEA_FGSEA_DF(gseaRes,db_id,analysis_type="gsea"))
     head(merged_gsea_df)

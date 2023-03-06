@@ -11,7 +11,7 @@ editor_options:
 Set dirs
 ```{r set_dir, echo=FALSE, warning=FALSE, include=FALSE}
 pipeliner_dir="~/../../Volumes/ccbr1238/rnaseq/123022_2/"
-output_dir="~/../../Volumes/ccbr1238/analysis_230227/"
+output_dir="~/../../Volumes/ccbr1238/analysis_230304/"
 
 dir.create(file.path(output_dir), showWarnings = FALSE)
 ```
@@ -39,11 +39,9 @@ colnames(groups_df)=c("replicate","group","replicate2")
 head(groups_df)  
 
 contrasts_list=c("SH1_0pt5mM-SCR_0pt5mM",
-                 "SH4_0pt5mM-SCR_0pt5mM")
-
-contrasts_list=("SCR_4mM-SCR_0pt5mM")
-
-contrasts_list=("SH2_0pt5mM-SCR_0pt5mM")
+                 "SH4_0pt5mM-SCR_0pt5mM",
+                 "SH2_0pt5mM-SCR_0pt5mM",
+                 "SCR_4mM-SCR_0pt5mM")
 ```
 
 Set pkgs
@@ -88,7 +86,7 @@ for (contrast_id in contrasts_list){
 }
 ```
 
-Find the overlap between contrasts: SCR_vs_SH1 and SCR_vs_SH4
+Find the overlap between contrasts: SH1, SH4
 ```{r deg_o1, echo=FALSE,warning=FALSE, message=FALSE}
 compare_list=c(contrasts_list[1],
                contrasts_list[2])
@@ -96,6 +94,17 @@ subtitle="SH1,SH4"
 DUAL_VENN_DIAGRAM(compare_list_in = compare_list,
                          subtitle_in = subtitle)
 ```
+
+Find the overlap between contrasts: SH1, SH4, SCR4
+```{r deg_o2, echo=FALSE,warning=FALSE, message=FALSE}
+compare_list=c("SH1_0pt5mM-SCR_0pt5mM",
+               "SH4_0pt5mM-SCR_0pt5mM",
+               "SCR_4mM-SCR_0pt5mM")
+subtitle="SH1_SH4_SCR4"
+COMPARATIVE_VENN_DIAGRAM(compare_list_in=compare_list,
+                         subtitle_in=subtitle)
+```
+
 
 Run GSEA analysis for GO and KEGG pathways
 
@@ -111,8 +120,27 @@ for (contrast_id in contrasts_list){
 }
 ```
 
-```{r}
-#SCR 0.5 (sample 3) vs GCN1 KD 0.5 SH1 (sample 5)
-#SCR 0.5 (sample 3) vs ATF4 KD 0.5 SH4 (sample 11)
+Run DEG analysis between CONTROL and two SH samples, then pathway analysis
+
+- SH1 vs SH4 vs SCR at FC=1.5
+```{r group_1, echo=FALSE,warning=FALSE, message=FALSE}
+log2_cutoff=1.5
+GROUP_DIFFERENTIAL(group1_in="SH1_0pt5mM",
+                   group2_in="SH4_0pt5mM",
+                   control_in="SCR_0pt5mM")
+
+MAIN_FGSEA_GSEA_ANALYSIS(db_list=db_list,
+                         contrast_id="SH1_0pt5mM_vs_SH4_0pt5mM")
+```
+
+- SH2 vs SH5 vs SCR at FC=1.25
+```{r group_2, echo=FALSE,warning=FALSE, message=FALSE}
+log2_cutoff=1.25
+GROUP_DIFFERENTIAL(group1_in="SH2_0pt5mM",
+                   group2_in="SH5_0pt5mM",
+                   control_in="SCR_0pt5mM")
+
+MAIN_FGSEA_GSEA_ANALYSIS(db_list=db_list,
+                         contrast_id="SH2_0pt5mM_vs_SH5_0pt5mM")
 ```
 

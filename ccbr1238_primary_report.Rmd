@@ -11,16 +11,19 @@ editor_options:
 ### Set dirs
 ```{r set_dir, echo=FALSE, warning=FALSE, include=FALSE}
 pipeliner_dir="~/../../Volumes/ccbr1238/rnaseq/123022_2/"
-output_dir="~/../../Volumes/ccbr1238/analysis_230221/"
+output_dir="~/../../Volumes/ccbr1238/analysis_230413/"
 
 dir.create(file.path(output_dir), showWarnings = FALSE)
 ```
 
 ### Set thresholds
 ```{r}
-species_in="Homo sapiens"
+species_in="Mus musculus"
 log2_cutoff=1.5
 fdr_cutoff=0.05
+csid="ccbr1238"
+sample_consensus_threshold=0.2
+read_minimum_threshold=10
 ```
 
 ### Set pkgs

@@ -1,0 +1,253 @@
+---
+title: "CCBR1238"
+author: "Samantha Sevilla"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+## Define parameters
+
+Set dirs
+```{r set_dir, echo=FALSE, warning=FALSE, include=FALSE}
+pipeliner_dir="~/../../Volumes/ccbr1238/rnaseq/123022_2/"
+output_dir="~/../../Volumes/ccbr1238/analysis_230413/"
+img_dir=paste0(output_dir,"img/")
+ipa_dir="~/../../Volumes/ccbr1238/IPA_230304/"
+GO_dir="~/../../Volumes/ccbr1238/analysis_230304/"
+
+dir.create(file.path(output_dir), showWarnings = FALSE)
+dir.create(file.path(img_dir), showWarnings = FALSE)
+```
+
+Set parameters
+```{r}
+species_in="Mus musculus"
+log2_cutoff=1.3
+fdr_cutoff=0.05
+padj_cutoff=0.05
+csid="ccbr1238"
+sample_consensus_threshold=0.1
+read_minimum_threshold=10
+
+# set list of databases to use for GO and KEGG analysis
+# http://www.gsea-msigdb.org/gsea/msigdb/collections.jsp
+db_list=c("C5:MF","C5:BP","C5:CC","C2:KEGG")
+
+# Minimal size of a gene set to test. All pathways below the threshold are excluded.
+minSize_gene_set=15
+```
+
+Set contrasts
+```{r set_contrasts, echo=FALSE, warning=FALSE}
+fpath=paste0(pipeliner_dir,"groups.tab")
+groups_df=read.csv(fpath,sep="\t",header=FALSE)
+colnames(groups_df)=c("replicate","group","replicate2")
+head(groups_df)  
+
+contrasts_list=c("SH1_0pt5mM-SCR_0pt5mM",
+                 "SH4_0pt5mM-SCR_0pt5mM",
+                 "SH2_0pt5mM-SCR_0pt5mM",
+                 "SCR_4mM-SCR_0pt5mM")
+```
+
+Set pkgs
+```{r set_pkg, echo=FALSE, warning=FALSE, include=FALSE}
+if (species_in == "Homo sapiens"){
+  species_db="org.Hs.eg.db"
+  species_short="hsa"
+} else if (species_in == "Mus musculus"){
+  species_db="org.Mm.eg.db"
+  species_short="mmu"
+} else{
+    print("Species not approved")
+}
+
+# package list
+list.of.packages=c("BiocManager","tidyr","DT","RUVSeq","RColorBrewer","textshape",
+                   "pheatmap","grid","dplyr","EnhancedVolcano","edgeR","DESeq2","ggplot2","plotly",
+                   "msigdbr","clusterProfiler","ggpubr","ggridges","factoextra",
+                   "gplots","ReactomePA",species_db,"pander","ggVennDiagram","fgsea","stringr",
+                   "gridExtra","tidyverse","scales","cowplot")
+
+#install as needed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+# source functions
+source("~/../../Volumes/ccbr1238/scripts/ccbr1238_source_code.R")
+
+# load packages
+invisible(lapply(list.of.packages, library, character.only = TRUE))
+
+#negate
+`%ni%` <- Negate(`%in%`)
+```
+
+## Run Analysis
+
+### HEATMAP
+
+Heat map of the following genes in these 4 samples. Please take 2 samples from each condition. So there will be a total of 8 columns of heat maps. Keep cut off >1.3
+
+These are the genes: ATF4, SLC7A1, SLC7A3, SLC7A5, SLC7A11, SLC3A2, SLC6A9, SLC38A1, SLC38A2, SLC38A7, SLC38A9, SLC1A4, SLC1A5
+
+Expectation: Here, at SCR 0.5 mM_1 and SCR 0.5 mM_2, the expression of these genes should be upregulated in comparison to SCR 4 mM_1, SCR 4mM_2. In SH1 0.5 mM_1, SH2 0.5 mM_1, SH4 0.5 mM_1, and SH5 0.5 mM_1, the expression of these genes should be down.
+
+Notes: Because these are normalized, scaled, values, there is no FC to use as a cutoff. FC only can be applied when a comparison is being made.
+
+```{r heatmap, echo=FALSE}
+# sample selection
+sample_list=c("SCR_0pt5mM_1","SCR_0pt5mM_2","SCR_4mM_1","SCR_4mM_2","SH1_0pt5mM_1",
+              "SH2_0pt5mM_1","SH4_0pt5mM_1","SH5_0pt5mM_1")
+print(subset(groups_df,replicate %in% sample_list)[,c("replicate","group")])
+
+# gene list
+gene_list=c("Atf4", "Slc7a1", "Slc7a3", "Slc7a5", "Slc7a11", "Slc3a2", "Slc6a9", "Slc38a1", "Slc38a2", "Slc38a7", "Slc38a9", "Slc1a4", "Slc1a5")
+MAIN_REPLICATE_HEATMAPS(sample_list=sample_list,
+                            gene_list=gene_list,
+                            scale_flag="ON",
+                            name_flag="ON")
+```
+
+### VENN DIAGRAM 
+The Venn plot you sent be last time is attached. This is an overlap of SCR 4mM, SH1 0.5 mM, and SH4 0.5 mM. Please make this gene expression overlap with SCR 0.5 mM, SH1 0.5 mM, and SH4 0.5 mM. Also, remove the percentages. The number of genes overlapping is just fine. You can also make one with just the percentage and without the number.
+
+Note: This is a differential venn diagram, meaning that to find differential genes, I am taking the comparison of SH1 vs SCR 0.5, SH4 vs SCR 0.5, etc. There is not a way to do a differential overlap including SCR 0.5 as a separate entity, given that this is being used as the comparison in all samples.
+
+### Transcriptional regulators
+
+Also, attached is an IPA Upstream regulator list obtained from a previous analysis just as an example. Please generate a similar list on the following genes based on Z score and p-value
+
+#### List of top 5 transcriptional regulators that are inhibited: ATF4, KDM5B, NUPR1, KAT5, NFE2L2
+
+NOTE: NFE2L2 is not listed as an inhibitor with all samples
+```{r z1,echo=FALSE}
+samples_include=c("SH1","SH2")
+for (sid in samples_include){
+  MAIN_ZSCORE_PLOTS(sample_id=sid,
+                    gene_list=c("ATF4", "KDM5B", "NUPR1", "KAT5", "NFE2L2"),
+                    exp_type="Transcriptional Regulators Inhibited")  
+}
+```
+
+#### List of top 5 transcriptional regulators that are activated: FOXM1, CEBPB, KLF4, MYC, NFKBIA
+```{r z2,echo=FALSE}
+samples_include=c("SH1","SH2")
+for (sid in samples_include){
+  MAIN_ZSCORE_PLOTS(sample_id=sid,
+                  gene_list=c("FOXM1", "CEBPB", "KLF4", "MYC", "NFKBIA"),
+                    exp_type="Transcriptional Regulators Activated")  
+}
+```
+
+#### List of top 3 transcriptional regulators: FOXM1, CEBPB, and ATF4
+```{r z3,echo=FALSE}
+samples_include=c("SH1","SH2")
+for (sid in samples_include){
+  MAIN_ZSCORE_PLOTS(sample_id=sid,
+                  gene_list=c("FOXM1", "CEBPB", "ATF4"),
+                    exp_type="Transcriptional Regulators")  
+}
+```
+
+### PATHWAY ANALSYSIS
+
+#### List 1
+Make a bar plot for the below pathways affected by GCN1 knockdown (SH1 and SH2 in comparison to SCR 0.5) based on their NES. As an example I have attached GO_BP pathways file.
+
+- Amino acid activation
+- Branched chain amino acid metabolic process
+- Cellular amino acid metabolic process
+- Cellular amino acid biosynthetic process
+- Serine family amino acid metabolic process
+- Glutathione transferase activity
+- Glutathione metabolic process
+- Amino acid transmembrane transporter activity
+- One carbon metabolic process
+- Glycosaminoglycan binding
+- G-protein coupled receptor signaling pathway
+- Heparin binding
+
+```{r path1, echo=FALSE}
+pathway_list=c("amino acid activation",
+               "branched-chain amino acid metabolic process",
+               "cellular amino acid metabolic process",
+               "cellular amino acid biosynthetic process", 
+               "serine family amino acid metabolic process", 
+               "glutathione transferase activity",
+               "glutathione metabolic process", 
+               "amino acid transmembrane transporter activity", 
+               "one carbon metabolic process", 
+               "glycosaminoglycan binding", 
+               "g protein-coupled receptor signaling pathway", 
+               "heparin binding")
+PLOT_FGSEA_GSEA_PATHWAYS(sample_list=c("SH1_0pt5mM","SH2_0pt5mM"),
+              pathway_list=pathway_list,
+              listid="list1")
+```
+
+#### List 2
+
+Make a bar plot for the below pathways affected by GCN1 knockdown (SH1 and SH2 in comparison to SCR 0.5) based on their NES. This will be a separate plot from number 4 and will have immune pathways included.
+
+- Amino acid activation
+- Branched chain amino acid metabolic process
+- Cellular amino acid metabolic process
+- Cellular amino acid biosynthetic process
+- Serine family amino acid metabolic process
+- Glutathione transferase activity
+- Glutathione metabolic process
+- Amino acid transmembrane transporter activity
+- One carbon metabolic process
+- Glycosaminoglycan binding
+- G-protein coupled receptor signaling pathway
+- Activation of innate immune response
+- Adaptive immune response
+- CD8 positive abT cell activation
+- Heparin binding
+
+```{r path2, echo=FALSE}
+pathway_list=c("amino acid activation",
+               "branched-chain amino acid metabolic process",
+               "cellular amino acid metabolic process",
+               "cellular amino acid biosynthetic process", 
+               "serine family amino acid metabolic process", 
+               "glutathione transferase activity",
+               "glutathione metabolic process", 
+               "amino acid transmembrane transporter activity", 
+               "one carbon metabolic process", 
+               "glycosaminoglycan binding", 
+               "g protein-coupled receptor signaling pathway", 
+               "activation of innate immune response",
+               "adaptive immune response",
+               "cd8 positive alpha beta t cell activation",
+               "heparin binding")
+PLOT_FGSEA_GSEA_PATHWAYS(sample_list=c("SH1_0pt5mM","SH2_0pt5mM"),
+              pathway_list=pathway_list,
+              listid="list2")
+```
+
+#### List 3
+
+Make a bar plot for below pathways affected commonly by knockdown of both GCN1 (SH1, and SH2) and ATF4 (SH4, SH5)
+- Serine family AA metabolic process
+- Glutathione metabolic process
+- Cellular AA biosynthetic process
+- Cellular AA metabolic process
+- Amino acid transmembrane transporter activity
+- Heparin binding
+- Glycosaminoglycan binding
+
+```{r path3, echo=FALSE}
+pathway_list=c("serine family amino acid metabolic process", 
+               "glutathione metabolic process", 
+               "cellular amino acid metabolic process",
+               "cellular amino acid biosynthetic process",
+               "amino acid transmembrane transporter activity", 
+               "heparin binding",
+               "glycosaminoglycan binding")
+PLOT_FGSEA_GSEA_PATHWAYS(sample_list=c("SH1_0pt5mM","SH2_0pt5mM"),
+              pathway_list=pathway_list,
+              listid="list3")
+```

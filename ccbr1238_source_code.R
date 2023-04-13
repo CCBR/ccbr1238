@@ -113,19 +113,28 @@ MAIN_PREP_QC_CORE<-function(groups_in,stage_in){
   
   # read in rawcounts
   fpath=paste0(pipeliner_dir,"DEG_ALL/RawCountFile_RSEM_genes.txt")
-  rawcounts=read.csv(fpath,sep="\t")
-  colnames(rawcounts)=SHORTEN_NAMES(colnames(rawcounts),"_expected_count")
-  rawcounts=rawcounts[,c("symbol",sample_list)]
-  rawcounts=rawcounts[,sample_list]
-  head(rawcounts)
+  raw_counts=read.csv(fpath,sep="\t")
+  
+  colnames(raw_counts)=SHORTEN_NAMES(colnames(raw_counts),"_expected_count")
+  raw_counts=raw_counts[,c("symbol",sample_list)]
+
+  out_raw_counts=separate(raw_counts,col="symbol",into=c("ENSEMBL","SYMBOL"),sep="[|]")
+  fpath=paste0(output_dir,"replicate_prenormalized_",csid,".csv")
+  write.csv(out_raw_counts,fpath)
   
   # filter
-  ## CPM is calcualted as "how many counts would I get for a gene if the sample had a library size of 1M".
-  #filtered=column_to_rownames(rawcounts)
-  filtered=ceiling(rawcounts)
+  ## CPM is calcualted as "how many counts would I get for a gene if the sample 
+  #had a library size of 1M".
+  raw_counts=column_to_rownames(raw_counts)
+  filtered=ceiling(raw_counts)
   cpm_counts=edgeR::cpm(as.matrix(filtered))
   log_cpm_counts=log2(cpm_counts)
-  keep=rowSums(cpm_counts>0.5)>2
+  
+  # filter by threshold
+  sample_count_threshold=round(ncol(raw_counts)*sample_consensus_threshold+.5)-1
+  print(paste0("Filtering for genes with min reads in at least ",sample_count_threshold," samples."))
+  keep=rowSums(cpm_counts>0.5)>sample_count_threshold
+
   filtered=filtered[keep,]
   head(filtered)
   
@@ -137,25 +146,36 @@ MAIN_PREP_QC_CORE<-function(groups_in,stage_in){
     sampleinfo=subset(groups_df,group%in%group_list)
     rownames(sampleinfo)=NULL
     GENERATE_BOXPLOTS(sampleinfo,filtered)
-  } else if (stage_in=="upper_quant"){
+  } else if (stage_in %in% c("upper_quant","DESEQ")){
     # run upper quant norm
     x=subset(groups_df,replicate %in% sample_list)$group
     x=as.factor(x)
     set <- newSeqExpressionSet(as.matrix(filtered),
                                phenoData = data.frame(x, row.names=colnames(filtered)))
-    set_u <- betweenLaneNormalization(set, which="upper")
-    GENERATE_RLE_PLOT(set_u,sample_list,"Fig. UpperQuant Normalization",stage_in)
-  } else if (stage_in=="DESEQ"){
-    # run DESEQ
-    x=subset(groups_df,replicate %in% sample_list)$group
-    x=as.factor(x)
-    set <- newSeqExpressionSet(as.matrix(filtered),
-                               phenoData = data.frame(x, row.names=colnames(filtered)))
-    dds <- DESeqDataSetFromMatrix(countData = counts(set),
-                                  colData = pData(set),
-                                  design = ~ x)
-    dds <- DESeq(dds)
-    GENERATE_RLE_PLOT(dds,sample_list,"Fig. DESEq2 Normalization",stage_in)
+    
+    if (stage_in=="upper_quant"){
+      set_u <- betweenLaneNormalization(set, which="upper")
+      GENERATE_RLE_PLOT(set_u,sample_list,"Fig. UpperQuant Normalization",stage_in)  
+    } else { # run DESEQ
+      dds <- DESeqDataSetFromMatrix(countData = counts(set),
+                                    colData = pData(set),
+                                    design = ~ x)
+      dds <- DESeq(dds)
+      GENERATE_RLE_PLOT(dds,sample_list,"Fig. DESEq2 Normalization",stage_in)
+      
+      # normalize count matrix
+      Normalized_counts_matrix<-as.data.frame(counts(dds, norm=TRUE))
+      nrow(Normalized_counts_matrix)
+      
+      # add flags for passing
+      sample_count_threshold=round(length(sample_list)*sample_consensus_threshold+.5)-1
+      Normalized_counts_matrix$sample_threshold=rowSums(Normalized_counts_matrix[,sample_list] > (read_minimum_threshold-1))
+      Normalized_counts_matrix$sample_threshold_flag=ifelse(Normalized_counts_matrix$sample_threshold > sample_consensus_threshold,"Y","N")
+      head(Normalized_counts_matrix)
+      
+      fpath=paste0(output_dir,"replicate_normalized_",csid,".csv")
+      write.csv(Normalized_counts_matrix,fpath)
+    }
   }
 }
 
@@ -959,6 +979,371 @@ MAIN_FGSEA_GSEA_ANALYSIS<-function(contrast_id,db_list){
   fpath=paste0(output_dir,"GO_KEGG_pathways_gsea_",contrast_id,".csv")
   write.table(merged_gsea_df,fpath,sep=",",row.names = FALSE)
   
+}
+
+######################################################################
+# functions heatmaps
+######################################################################
+# Overwrites the pheatmap defaults
+DRAW_COLNAMES_45 <- function (coln, gaps, ...) {
+  "Overwrites body of pheatmap:::draw_colnames, customizing it my liking"
+  coord = pheatmap:::find_coordinates(length(coln), gaps)
+  x = coord$coord - 0.5 * coord$size
+  res = textGrob(coln, x = x, y = unit(1, "npc") - unit(3,"bigpts"), vjust = 0.5, hjust = 1, rot = 25, gp = gpar(...))
+  return(res)
+}
+
+SAVE_PHEATMAP_PDF <- function(x, filename, width=7, height=7) {
+  stopifnot(!missing(x))
+  stopifnot(!missing(filename))
+  pdf(filename, width=width, height=height)
+  grid::grid.newpage()
+  grid::grid.draw(x$gtable)
+  dev.off()
+}
+
+# creates heatmap for multiple replicates
+PLOT_HEAT_MAP<-function(df_in,show_names="ON",title_in="",cluster_by_rows="ON",fpath=""){
+  #df_in=counts_matrix_complete;show_names="OFF";title_in="";cluster_by_rows="ON";fpath=fpath
+  
+  ####################
+  # formatting
+  #####################
+  # Overwrite pheatmaps default draw_colnames with new version
+  assignInNamespace(x="draw_colnames", value="DRAW_COLNAMES_45",ns=asNamespace("pheatmap")) 
+  
+  # Heatmap Color Gradients 
+  paletteLength <- 1000
+  mycolors <- colorRampPalette(c("blue","white","red"), interpolate = "linear")(paletteLength)
+  
+  ####################
+  # metadata
+  ####################
+  # Creating Dataframe to map samplenames to groups
+  meta = groups_df
+  groups <- data.frame(as.factor(meta$group))
+  colnames(groups) <- "Groups"
+  rownames(groups) <- meta$sampleid
+  
+  # Creating Group Column Annotation Colors
+  columnColors <- c("lightpink","lightblue","orange","purple","red","green","darkblue","brown")
+  names(columnColors) <- unique(groups$Groups)
+  anno_colors <- list(Groups = columnColors)
+  
+  # set title
+  if(title_in==""){
+    title_in=paste0("Genes Included (N=",nrow(df_in),")")
+  }
+  ####################
+  # function
+  ####################
+  if (show_names=="OFF" && cluster_by_rows=="ON"){
+    p=pheatmap(df_in, 
+               scale = "none", main=title_in,
+               cellwidth = 30, fontsize = 12, fontsize_row = 5, fontsize_col = 8, color = mycolors, 
+               border_color = "NA",cluster_cols=F,annotation_colors = anno_colors, show_rownames = FALSE)
+  } else if (show_names=="ON" && cluster_by_rows=="ON") {
+    p=pheatmap(df_in, 
+               scale = "none", main=title_in,
+               cellwidth = 30, fontsize = 12, fontsize_row = 5, fontsize_col = 8, color = mycolors, 
+               border_color = "NA",cluster_cols=F,annotation_colors = anno_colors, show_rownames = TRUE)
+  } else if (show_names=="OFF" && cluster_by_rows=="OFF") {
+    p=pheatmap(df_in, 
+               scale = "none", main=title_in,
+               cellwidth = 30, fontsize = 12, fontsize_row = 5, fontsize_col = 8, color = mycolors, 
+               border_color = "NA",cluster_cols=F,cluster_rows=F,annotation_colors = anno_colors, 
+               show_rownames = FALSE)
+  }
+  
+  # set a fpath if it's missing
+  if (fpath==""){
+    fpath=paste0(img_dir,"replicate_heatmap_",contrast_id,".pdf")
+  }
+  
+  SAVE_PHEATMAP_PDF(p, fpath)
+}
+
+# main function to prep and run plot_heat_map
+MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
+  # read in counts matrix
+  fpath=paste0(output_dir,"replicate_normalized_",csid,".csv")
+  counts_matrix=read.csv(fpath,sep=",")
+  counts_matrix=separate(counts_matrix,col="X",into=c("ENSEMBL","SYMBOL"),sep="[|]")
+  nrow(counts_matrix)
+  
+  # filter for genes meeting threshold
+  counts_matrix_filtered=subset(counts_matrix,sample_threshold_flag=="Y")
+  nrow(counts_matrix_filtered)
+  
+  # filter for gene_list provided
+  print("**Subsetting based on gene_list provided")
+  counts_matrix_subset=subset(counts_matrix_filtered,SYMBOL %in% gene_list)
+  missing_genes=gene_list[gene_list%ni%unique(counts_matrix_subset$SYMBOL)]
+  if(length(missing_genes)>0){print(paste0("The following genes are missing:",missing_genes))}
+  print("The following genes are included:")
+  print(unique(counts_matrix_subset$SYMBOL))
+  
+  # pull rowname
+  rownames(counts_matrix_subset)=make.unique(counts_matrix_subset$SYMBOL)
+  head(counts_matrix_subset)
+  
+  # Subet for samples
+  print("**Subsetting based on sample_list provided")
+  counts_matrix_subset=counts_matrix_subset[,sample_list]
+  
+  # scale, if needed
+  if (scale_flag=="ON"){
+    print("**Performing scaling")
+    
+    # ztransform df
+    counts_matrix_complete=t(scale(t(counts_matrix_subset)))
+    
+    # fix any nan or inf
+    counts_matrix_complete[is.nan(counts_matrix_complete)] <- 0
+    counts_matrix_complete[counts_matrix_complete=="Inf"] <- 0
+    range(counts_matrix_complete)
+    
+    # set fpath
+    fpath=paste0(img_dir,"replicate_heatmap_withscale_")
+    
+  } else{
+    print("**No scaling will be performed")
+    counts_matrix_complete=counts_matrix_subset
+    
+    # set fpath
+    fpath=paste0(img_dir,"replicate_heatmap_withoutscale_")
+  }
+  
+  # shorten col names
+  colnames(counts_matrix_complete)=gsub("pt",".",colnames(counts_matrix_complete))
+  
+  print("**Generating heatmaps")
+  # write out file
+  fpath_f=paste0(fpath,"heatmap.csv")
+  write.csv(counts_matrix_complete,fpath_f)
+  
+  # generate heatmap
+  fpath=paste0(fpath,"heatmap.pdf")
+  PLOT_HEAT_MAP(df_in=counts_matrix_complete,
+                show_names=name_flag,
+                title_in="",
+                cluster_by_rows="ON",
+                fpath=fpath)
+}
+
+######################################################################
+# IPA Analysis
+######################################################################
+CREATE_ZSCORE_PLOTS<-function(top_df,mol_num,sample_id,exp_type){
+  #top_df=ipa_genes_specific; mol_num=nrow(top_df)
+  # create plot
+  #https://stackoverflow.com/questions/40469757/change-the-shape-of-legend-key-for-geom-bar-in-ggplot2
+  cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", 
+  "#D55E00", "#CC79A7", "#000000", "#E69F00", "#56B4E9",
+  "#009E73","#F0E442","#0072B2","#D55E00","#CC79A7")
+  subPalette=cbPalette[length(top_df$Molecule.Type)]
+  scale_factor <-2
+  
+  #create plot without legend
+  p1 = top_df %>%
+    mutate(Upstream.Regulator = fct_reorder(Upstream.Regulator, Activation.z.score)) %>%
+    ggplot(aes(x = Upstream.Regulator))+
+    geom_bar(aes(y = Activation.z.score,fill=Molecule.Type),colour="red", stat="identity")+
+    geom_point(aes(y = logpvalue/scale_factor,size=logpvalue/scale_factor,color=""),
+               shape=20, cex=8)+ # create dummy points so pvalue legend symbol appears
+    geom_point(aes(y = logpvalue/scale_factor,size=logpvalue/scale_factor),
+               shape=20, cex=8,color="blue")+
+    scale_color_manual(name = "log10(pvalue) x \nActivation Z Score",
+                       values = c(" " = "blue")) + # add legened for pvalue point
+    scale_fill_brewer(direction = -1, palette = "Pastel2")+ # change palette for bars
+    coord_flip()+ # flip x and y axis
+    scale_y_continuous(sec.axis = sec_axis(~ .*1, #create a sec "x" axis for the log10(pvalue data)
+                   labels = number_format(scale=scale_factor), 
+                   name="log10(pvalue) x sign of Activation Z Score"))+
+    xlab("Upstream Regulator")+
+    ylab("Activation Z Score")+
+    theme_bw() + # remove grey background
+    theme(axis.line.x.top = element_line(color = "blue"),
+          axis.ticks.x.top= element_line(color = "blue"), # change top x axis color to match pvalues
+          axis.text.x.top = element_text(color = "blue"),
+          axis.title.x.top=element_text(colour="blue"))+
+    theme(axis.line.x.bottom = element_line(color = "red"),
+          axis.ticks.x.bottom= element_line(color = "red"), # change bottom x axis color to match z scores
+          axis.text.x.bottom = element_text(color = "red"),
+          axis.title.x.bottom=element_text(colour="red"))+
+    ggtitle(paste0(exp_type,": ",sample_id)) + # add title
+    theme(plot.title = element_text(size=22, face="bold")) + #  increase title
+    theme(legend.key=element_rect(fill=NA)) +# remove grey from pvalue background
+    labs(color="log10(pvalue) x \nActivation Z Score",
+         fill="Activation Z Score")+ # change the order of the legend so log10 is on top
+    guides(fill  = guide_legend(order = 2),color = guide_legend(order = 1))+
+    theme(legend.position = "none") # remove legend
+  
+  #legend with FILL only
+  p2 = top_df %>%
+    mutate(Upstream.Regulator = fct_reorder(Upstream.Regulator, Activation.z.score)) %>%
+    ggplot(aes(x = Upstream.Regulator))+
+    geom_bar(aes(y = Activation.z.score,fill=Molecule.Type),colour="red", stat="identity")+
+    scale_fill_brewer(direction = -1, palette = "Pastel2")+ # change palette for bars
+    coord_flip()+ # flip x and y axis
+    scale_y_continuous(sec.axis = sec_axis(~ .*1, #create a secondary "x" axis for the log10(pvalue data)
+                   labels = number_format(scale=scale_factor), 
+                   name="log10(pvalue) x sign of Activation Z Score"))+
+    xlab("Upstream Regulator")+
+    ylab("Activation Z Score")+
+    theme_bw() + # remove grey background
+    theme( axis.line.x.top = element_line(color = "blue"),
+           axis.ticks.x.top= element_line(color = "blue"), # change top x axis color to match pvalues
+           axis.text.x.top = element_text(color = "blue"),
+           axis.title.x.top=element_text(colour="blue"))+
+    theme( axis.line.x.bottom = element_line(color = "red"),
+           axis.ticks.x.bottom= element_line(color = "red"), # change bottom x axis color to match z scores
+           axis.text.x.bottom = element_text(color = "red"),
+           axis.title.x.bottom=element_text(colour="red"))+
+    theme(legend.key=element_rect(fill=NA)) +# remove grey from pvalue background
+    theme(legend.direction = "vertical", legend.box = "horizontal")+
+    theme(legend.title = element_text(size=12,color="red",face="bold"))
+  
+  # legend for COLOR only
+  p3 = top_df %>%
+    mutate(Upstream.Regulator = fct_reorder(Upstream.Regulator, Activation.z.score)) %>%
+    ggplot(aes(x = Upstream.Regulator))+
+    geom_point(aes(y = logpvalue/scale_factor,size=logpvalue/scale_factor,color=""),
+               shape=20, cex=8)+ # create dummy points so pvalue legend symbol appears
+    geom_point(aes(y = logpvalue/scale_factor,size=logpvalue/scale_factor),
+               shape=20, cex=8,color="blue")+
+    scale_color_manual(name = "log10(pvalue) x \nsign of Activation Z Score",
+                       values = c(" " = "blue")) + # add legened for pvalue point
+    coord_flip()+ # flip x and y axis
+    scale_y_continuous(sec.axis = sec_axis(~ .*1, #create a secondary "x" axis for the log10(pvalue data)
+                   labels = number_format(scale=scale_factor), 
+                   name="log10(pvalue) x sign of Activation Z Score"))+
+    theme_bw() + # remove grey background
+    theme(legend.key=element_rect(fill=NA)) +# remove grey from pvalue background
+    labs(color="log10(pvalue) x \nActivation Z Score",
+         fill="Activation Z Score")+ # change the order of the legend so log10 is on top
+    theme(legend.direction = "vertical", legend.box = "horizontal")+
+    theme(legend.title = element_text(size=12,color="blue",face="bold"))
+  
+  # get two legends
+  leg2=get_legend(p2)
+  leg3=get_legend(p3)
+  
+  # combine legends
+  leg32 = plot_grid(leg3, leg2,
+                    nrow = 2)
+  
+  # create final plot
+  final_p = plot_grid(p1,
+                      leg32,
+                      nrow = 1,
+                      align = "h",
+                      axis = "t",
+                      rel_widths = c(1, 0.3))
+  
+  
+  # save and print
+  ext=gsub(" ","_",exp_type)
+  fpath=paste0(img_dir,sample_id,"_",ext,"_molecules.png")
+  ggsave(fpath,final_p)
+  print(final_p)
+}
+
+MAIN_ZSCORE_PLOTS<-function(sample_id,gene_list,exp_type){
+  # read in IPA file
+  ## File generated from UPSTREAM analysis
+  ## Select and download Casual Networks
+  fpath=paste0(ipa_dir,sample_id,"_upstream.txt")
+  ipa_df=read.csv(fpath,sep="\t",skip=2)
+  head(ipa_df)
+  
+  # remove values without z scores, pvalues
+  ipa_df_filt=ipa_df[complete.cases(ipa_df$Activation.z.score),]
+  ipa_df_filt=ipa_df_filt[complete.cases(ipa_df_filt$p.value.of.overlap),]
+  
+  # subset for specific gene list
+  ipa_genes_specific=subset(ipa_df_filt,Upstream.Regulator %in% gene_list)
+  missing_genes=gene_list[gene_list%ni%unique(ipa_genes_specific$Upstream.Regulator)]
+  if(length(missing_genes)>0){print(paste0("The following genes were not found as a Master regulator: ",
+                                           missing_genes))}
+  
+  # add calc cols
+  ipa_genes_specific$signA=ipa_genes_specific$Activation.z.score<0
+  ipa_genes_specific$signA=gsub("TRUE",1,ipa_genes_specific$signA)
+  ipa_genes_specific$signA=gsub("FALSE",-1,ipa_genes_specific$signA)
+  ipa_genes_specific$logpvalue=log(ipa_genes_specific$p.value.of.overlap,
+                                   100)*as.numeric(ipa_genes_specific$signA)
+  
+  # create plot
+  CREATE_ZSCORE_PLOTS(ipa_genes_specific,nrow(ipa_genes_specific),sample_id,exp_type)
+  
+  #create DT
+  select_cols=c("Molecule.Type","Upstream.Regulator","Activation.z.score","p.value.of.overlap","logpvalue")
+  out_df=ipa_genes_specific[,select_cols]
+  out_df$logpvalue=signif(out_df$logpvalue, 4)
+  colnames(out_df)=c("Molecule.Type","Upstream.Regulator","Activation.z.score","pvalue","log10.pvalue")  
+  DT::datatable(out_df,caption = paste0(exp_type,": ",sample_id))
+}
+
+######################################################################
+# FGSEA/GSEA Followup
+########################################################################
+PLOT_FGSEA_GSEA_PATHWAYS<-function(sample_list,pathway_list,listid){
+  
+  # pull fgsea and gsea results
+  go_df=data.frame()
+  analysis_list=c("gsea","fgsea")
+  for (aid in analysis_list){
+    for (sid in sample_list){
+      fpath=paste0(GO_dir,"GO_KEGG_pathways_",aid,"_",sid,"-SCR_0pt5mM.csv")
+      tmp_df=read.csv(fpath)
+      
+      # add sampleid
+      tmp_df$sample_id=gsub("pt",".",sid)
+      
+      # convert fsea path names to gsea path names
+      tmp_df$pathway=gsub("_"," ",tolower(tmp_df$pathway))
+      
+      if(nrow(go_df)==0){
+        go_df=tmp_df
+      } else{
+        go_df=rbind(go_df,tmp_df)
+      }
+    }  
+  }
+  head(go_df)
+  
+  # filter for pathway list
+  go_filt=subset(go_df,pathway %in% pathway_list)[,c("pathway","NES","sample_id")]
+  head(go_filt)
+  
+  # sort
+  go_filt = go_filt %>% arrange(desc(pathway))
+  go_filt$pathway <- factor(go_filt$pathway, levels = unique(go_filt$pathway))
+  head(go_filt)
+  
+  # check pathways
+  missing_paths=pathway_list[pathway_list%ni%unique(go_filt$pathway)]
+  if (length(missing_paths)>0){print(paste0("There are missing pathways: ", missing_paths))}
+  
+  # plot
+  p = ggplot(data = go_filt, aes(x = pathway, y = NES, fill = sample_id)) +
+    geom_bar(stat = "identity", position = position_dodge(),width=0.5)  +
+    labs(x = "Pathway", y = "NES") +
+    theme(plot.title = element_text(hjust = 0.5), 
+          axis.title.x = element_text(face="bold", size = 12),
+          axis.title.y = element_text(face="bold", size = 12),
+          legend.title = element_text(face="bold", size = 10)) +
+    theme_bw() +
+    theme(aspect.ratio = 1.5)+  
+    coord_flip()
+  p
+  
+  # save plots
+  sample_ext=gsub("_0.5mM","",paste0(unique(go_filt$sample_id),collapse="_"))
+  fpath=paste0(img_dir,"pathway_",sample_ext,"_",listid,".png")
+  ggsave(fpath,p)
+  print(p)
 }
 
 ######################################################################

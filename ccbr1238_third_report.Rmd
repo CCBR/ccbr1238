@@ -48,7 +48,10 @@ head(groups_df)
 contrasts_list=c("SH1_0pt5mM-SCR_0pt5mM",
                  "SH4_0pt5mM-SCR_0pt5mM",
                  "SH2_0pt5mM-SCR_0pt5mM",
-                 "SCR_4mM-SCR_0pt5mM")
+                 "SCR_4mM-SCR_0pt5mM",
+                 "SCR_0pt5mM-SCR_4mM",
+                 "SH1_0pt5mM-SCR_4mM",
+                 "SH4_0pt5mM-SCR_4mM")
 ```
 
 Set pkgs
@@ -98,7 +101,7 @@ Notes: Because these are normalized, scaled, values, there is no FC to use as a 
 
 ```{r heatmap, echo=FALSE}
 # sample selection
-sample_list=c("SCR_0pt5mM_1","SCR_0pt5mM_2","SCR_4mM_1","SCR_4mM_2","SH1_0pt5mM_1",
+sample_list=c("SCR_4mM_1","SCR_4mM_2","SCR_0pt5mM_1","SCR_0pt5mM_2","SH1_0pt5mM_1",
               "SH2_0pt5mM_1","SH4_0pt5mM_1","SH5_0pt5mM_1")
 print(subset(groups_df,replicate %in% sample_list)[,c("replicate","group")])
 
@@ -112,8 +115,24 @@ MAIN_REPLICATE_HEATMAPS(sample_list=sample_list,
 
 ### VENN DIAGRAM 
 The Venn plot you sent be last time is attached. This is an overlap of SCR 4mM, SH1 0.5 mM, and SH4 0.5 mM. Please make this gene expression overlap with SCR 0.5 mM, SH1 0.5 mM, and SH4 0.5 mM. Also, remove the percentages. The number of genes overlapping is just fine. You can also make one with just the percentage and without the number.
+- SCR 4mM vs SCR 0.5 mM
+- SCR 4mM vs SH1 0.5 mM
+- SCR 4mM vs SH4 0.5 mM
 
-Note: This is a differential venn diagram, meaning that to find differential genes, I am taking the comparison of SH1 vs SCR 0.5, SH4 vs SCR 0.5, etc. There is not a way to do a differential overlap including SCR 0.5 as a separate entity, given that this is being used as the comparison in all samples.
+```{r deg, echo=FALSE,warning=FALSE, message=FALSE}
+for (contrast_id in contrasts_list){
+  PRIMARY_DIFFERENTIAL(contrast_id)
+}
+```
+
+```{r vd, echo=FALSE}
+compare_list=c("SCR_0pt5mM-SCR_4mM",
+               "SH1_0pt5mM-SCR_4mM",
+               "SH4_0pt5mM-SCR_4mM")
+subtitle="SH1_SH4_SCR"
+COMPARATIVE_VENN_DIAGRAM(compare_list_in=compare_list,
+                         subtitle_in=subtitle)
+```
 
 ### Transcriptional regulators
 
@@ -162,7 +181,6 @@ Make a bar plot for the below pathways affected by GCN1 knockdown (SH1 and SH2 i
 - Cellular amino acid biosynthetic process
 - Serine family amino acid metabolic process
 - Glutathione transferase activity
-- Glutathione metabolic process
 - Amino acid transmembrane transporter activity
 - One carbon metabolic process
 - Glycosaminoglycan binding
@@ -231,23 +249,83 @@ PLOT_FGSEA_GSEA_PATHWAYS(sample_list=c("SH1_0pt5mM","SH2_0pt5mM"),
 #### List 3
 
 Make a bar plot for below pathways affected commonly by knockdown of both GCN1 (SH1, and SH2) and ATF4 (SH4, SH5)
-- Serine family AA metabolic process
 - Glutathione metabolic process
+- Serine family AA metabolic process
 - Cellular AA biosynthetic process
 - Cellular AA metabolic process
 - Amino acid transmembrane transporter activity
+- Glycosaminoglycan binding
+- Heparin binding
+
+```{r path3, echo=FALSE}
+pathway_list=c("glutathione metabolic process", 
+               "serine family amino acid metabolic process", 
+               "cellular amino acid biosynthetic process",
+               "cellular amino acid metabolic process",
+               "amino acid transmembrane transporter activity", 
+               "glycosaminoglycan binding",
+               "heparin binding")
+PLOT_FGSEA_GSEA_PATHWAYS(sample_list=c("SH2_0pt5mM","SH4_0pt5mM"),
+              pathway_list=pathway_list,
+              listid="list3")
+```
+
+#### List 4
+
+- Glutathione metabolic process
+- Serine family AA metabolic process
+- One carbon metabolic process
+- Amino acid transmembrane transporter activity
+- Cellular AA biosynthetic process
+- Cellular AA metabolic process
+- Amino acid activation
+- Heparin binding
+- Glycosaminoglycan binding
+- Innate immune response
+- Adaptive immune response
+- CD8 positive alpha beta T cell activation
+
+```{r path4, echo=FALSE}
+pathway_list=c("glutathione metabolic process", 
+               "serine family amino acid metabolic process", 
+               "one carbon metabolic process",
+               "amino acid transmembrane transporter activity", 
+               "cellular amino acid biosynthetic process",
+               "cellular amino acid metabolic process",
+               "amino acid activation",
+               "heparin binding",
+               "glycosaminoglycan binding",
+               "activation of innate immune response",
+               "adaptive immune response",
+               "cd8 positive alpha beta t cell activation")
+PLOT_FGSEA_GSEA_PATHWAYS(sample_list=c("SH1_0pt5mM","SH2_0pt5mM"),
+              pathway_list=pathway_list,
+              listid="list4")
+```
+
+#### List 5
+
+- Glutathione metabolic process
+- Serine family AA metabolic process
+- One carbon metabolic process
+- Amino acid transmembrane transporter activity
+- Cellular AA biosynthetic process
+- Cellular AA metabolic process
+- Amino acid activation
 - Heparin binding
 - Glycosaminoglycan binding
 
-```{r path3, echo=FALSE}
-pathway_list=c("serine family amino acid metabolic process", 
-               "glutathione metabolic process", 
-               "cellular amino acid metabolic process",
-               "cellular amino acid biosynthetic process",
+```{r path5, echo=FALSE}
+pathway_list=c("glutathione metabolic process", 
+               "serine family amino acid metabolic process", 
+               "one carbon metabolic process",
                "amino acid transmembrane transporter activity", 
+               "cellular amino acid biosynthetic process",
+               "cellular amino acid metabolic process",
+               "amino acid activation",
                "heparin binding",
                "glycosaminoglycan binding")
 PLOT_FGSEA_GSEA_PATHWAYS(sample_list=c("SH1_0pt5mM","SH2_0pt5mM"),
               pathway_list=pathway_list,
-              listid="list3")
+              listid="list5")
 ```

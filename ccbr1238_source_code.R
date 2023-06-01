@@ -212,10 +212,12 @@ PRIMARY_DIFFERENTIAL<-function(contrast_in){
 }
 
 COMPARATIVE_VENN_DIAGRAM<-function(compare_list_in,subtitle_in){
+  
   # for each of the contrasts, read in the DEG file and generate sig lists
   for (contrast_id in compare_list_in){
     sample_name=gsub("_0pt5mM-SCR_0pt5mM","",contrast_id)
     sample_name=gsub("_4mM-SCR_0pt5mM","4",sample_name)
+    sample_name=gsub("_0pt5mM-SCR_4mM","",sample_name)
     print(paste0("** Processing ", sample_name," **"))
     
     # read DEG from primary differential
@@ -234,21 +236,58 @@ COMPARATIVE_VENN_DIAGRAM<-function(compare_list_in,subtitle_in){
   # create a sample list
   sample_list=gsub("_0pt5mM-SCR_0pt5mM","",compare_list_in)
   sample_list=gsub("_4mM-SCR_0pt5mM","4",sample_list)
+  sample_list=gsub("_0pt5mM-SCR_4mM","",sample_list)
   sample_sig_list=paste0(sample_list,"_siglist")
   
   # List of genes
   x <- list(A = get(sample_sig_list[1]), B = get(sample_sig_list[2]), C=get(sample_sig_list[3]))
   
+  #For SCR 0.5 use light blue, for SH1 0.5 light red, and SH4 0.5 light green.
+  
+  
   # Venn diagram with custom category names
-  p = ggVennDiagram(x, color = 1, lwd = 0.7,
-                    category.names = c(sample_list[1], sample_list[2],sample_list[3])) + 
-    scale_fill_gradient(low = "red", high = "blue")
+  print(head(x))
   full_title=paste0("Significantly Differentiated Genes:\n",subtitle_in)
-  pf = p + ggtitle(full_title)
+  
+  # plot with counts
+  p=ggVennDiagram(x, color = 1, lwd = 0.7,
+                  category.names = c(sample_list[1], sample_list[2],sample_list[3]),
+                  label = "count", label_size = 8)
+  p$layers[[1]]$mapping <- aes(fill = name)
+  p1=p + scale_fill_manual(values = c(SCR = "#9ecae1", 
+                                   SH1="#f03b20",
+                                   SH4="#a1d99b",
+                                   SCR..SH1="#bcbddc",
+                                   SCR..SH4="#1c9099",
+                                   SH1..SH4="#b25f4a",
+                                   SCR..SH1..SH4="#00FFFF"))+
+    scale_color_manual(values = c("#9ecae1","#f03b20","#a1d99b")) +
+    theme(legend.position = "none")
+  
+  #plot with percent
+  p=ggVennDiagram(x, color = 1, lwd = 0.7,
+                  category.names = c(sample_list[1], sample_list[2],sample_list[3]),
+                  label = "percent", label_size = 8)
+  p$layers[[1]]$mapping <- aes(fill = name)
+  p2=p + scale_fill_manual(values = c(SCR = "#9ecae1", 
+                                      SH1="#f03b20",
+                                      SH4="#a1d99b",
+                                      SCR..SH1="#bcbddc",
+                                      SCR..SH4="#1c9099",
+                                      SH1..SH4="#b25f4a",
+                                      SCR..SH1..SH4="#00FFFF"))+
+    scale_color_manual(values = c("#9ecae1","#f03b20","#a1d99b")) +
+    theme(legend.position = "none")
   
   # save and print venn diagram
+  pf = p1 + ggtitle(full_title)
   print(pf)
-  fpath=paste0(output_dir,"venndiagram_",subtitle,"_genes.pdf")
+  fpath=paste0(img_dir,"venndiagram_",subtitle,"_count_genes.pdf")
+  ggsave(fpath,pf)
+  
+  pf = p2 + ggtitle(full_title)
+  print(pf)
+  fpath=paste0(img_dir,"venndiagram_",subtitle,"_percent_genes.pdf")
   ggsave(fpath,pf)
   
   # find intersections
@@ -1053,6 +1092,12 @@ PLOT_HEAT_MAP<-function(df_in,show_names="ON",title_in="",cluster_by_rows="ON",f
                cellwidth = 30, fontsize = 12, fontsize_row = 5, fontsize_col = 8, color = mycolors, 
                border_color = "NA",cluster_cols=F,cluster_rows=F,annotation_colors = anno_colors, 
                show_rownames = FALSE)
+  } else if (show_names=="ON" && cluster_by_rows=="OFF") {
+    p=pheatmap(df_in, 
+               scale = "none", main=title_in,
+               cellwidth = 30, fontsize = 12, fontsize_row = 5, fontsize_col = 8, color = mycolors, 
+               border_color = "NA",cluster_cols=F,cluster_rows=F,annotation_colors = anno_colors, 
+               show_rownames = TRUE)
   }
   
   # set a fpath if it's missing
@@ -1083,6 +1128,9 @@ MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
   print("The following genes are included:")
   print(unique(counts_matrix_subset$SYMBOL))
   
+  # sort
+  counts_matrix_subset = counts_matrix_subset %>% arrange(SYMBOL)
+
   # pull rowname
   rownames(counts_matrix_subset)=make.unique(counts_matrix_subset$SYMBOL)
   head(counts_matrix_subset)
@@ -1127,7 +1175,7 @@ MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
   PLOT_HEAT_MAP(df_in=counts_matrix_complete,
                 show_names=name_flag,
                 title_in="",
-                cluster_by_rows="ON",
+                cluster_by_rows="OFF",
                 fpath=fpath)
 }
 
@@ -1318,8 +1366,8 @@ PLOT_FGSEA_GSEA_PATHWAYS<-function(sample_list,pathway_list,listid){
   head(go_filt)
   
   # sort
-  go_filt = go_filt %>% arrange(desc(pathway))
-  go_filt$pathway <- factor(go_filt$pathway, levels = unique(go_filt$pathway))
+  # go_filt = go_filt %>% arrange(desc(pathway)) #alpha
+  go_filt$pathway <- factor(go_filt$pathway, levels = rev(pathway_list))
   head(go_filt)
   
   # check pathways

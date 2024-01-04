@@ -1,0 +1,187 @@
+---
+title: "CCBR1238"
+author: "Samantha Sevilla"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+## Define parameters
+
+Set dirs
+```{r set_dir, echo=FALSE, warning=FALSE, include=FALSE}
+pipeliner_dir="/vf/users/CCBR/projects/ccbr1238/rnaseq/123022_2/"
+output_dir="/vf/users/CCBR/projects/ccbr1238/analysis_240104/"
+img_dir=paste0(output_dir,"img/")
+ipa_dir="/vf/users/CCBR/projects/ccbr1238/IPA_230304/"
+GO_dir="/vf/users/CCBR/projects/ccbr1238/analysis_240104/"
+
+dir.create(file.path(output_dir), showWarnings = FALSE)
+dir.create(file.path(img_dir), showWarnings = FALSE)
+```
+
+Set parameters
+```{r}
+species_in="Mus musculus"
+log2_cutoff=1.3
+fdr_cutoff=0.05
+padj_cutoff=0.05
+csid="ccbr1238"
+sample_consensus_threshold=0.1
+read_minimum_threshold=10
+
+# set list of databases to use for GO and KEGG analysis
+# http://www.gsea-msigdb.org/gsea/msigdb/collections.jsp
+db_list=c("C5:MF","C5:BP","C5:CC","C2:KEGG")
+
+# Minimal size of a gene set to test. All pathways below the threshold are excluded.
+minSize_gene_set=15
+```
+
+Set contrasts
+```{r set_contrasts, echo=FALSE, warning=FALSE}
+fpath=paste0(pipeliner_dir,"groups.tab")
+groups_df=read.csv(fpath,sep="\t",header=FALSE)
+colnames(groups_df)=c("replicate","group","replicate2")
+head(groups_df)  
+
+contrasts_list=c("SH1_0pt5mM-SCR_0pt5mM",
+                 "SH4_0pt5mM-SCR_0pt5mM",
+                 "SH2_0pt5mM-SCR_0pt5mM",
+                 "SCR_4mM-SCR_0pt5mM",
+                 "SCR_0pt5mM-SCR_4mM",
+                 "SH1_0pt5mM-SCR_4mM",
+                 "SH4_0pt5mM-SCR_4mM")
+```
+
+Set pkgs
+```{r set_pkg, echo=FALSE, warning=FALSE, include=FALSE}
+if (species_in == "Homo sapiens"){
+  species_db="org.Hs.eg.db"
+  species_short="hsa"
+} else if (species_in == "Mus musculus"){
+  species_db="org.Mm.eg.db"
+  species_short="mmu"
+} else{
+    print("Species not approved")
+}
+
+# package list
+list.of.packages=c("BiocManager","tidyr","DT","RUVSeq","RColorBrewer","textshape",
+                   "pheatmap","grid","dplyr","EnhancedVolcano","edgeR","DESeq2","ggplot2","plotly",
+                   "msigdbr","clusterProfiler","ggpubr","ggridges","factoextra",
+                   "gplots","ReactomePA",species_db,"pander","ggVennDiagram","fgsea","stringr",
+                   "gridExtra","tidyverse","scales","cowplot")
+
+#install as needed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+# source functions
+source("/vf/users/CCBR/projects/ccbr1238/scripts/ccbr1238_source_code.R")
+
+# load packages
+invisible(lapply(list.of.packages, library, character.only = TRUE))
+
+#negate
+`%ni%` <- Negate(`%in%`)
+```
+
+## Run Analysis
+
+1. From the upstream regulator analysis of GCN1 knockdown in human KLM1 cells (see attached), can you make a plot for these top 5 cytokines with Z score and p value
+TNF, IFNG, IL1A, IL1B, IL15.
+
+```{r}
+samples_include=c("SH1","SH2")
+for (sid in samples_include){
+  MAIN_ZSCORE_PLOTS(sample_id=sid,
+                    gene_list=c("TNF", "IFNG", "IL1A", "IL1B", "IL15"),
+                    exp_type="Top 5 Cytokines")  
+}
+```
+ 
+
+2.	From the KLM1 GCN1 KD (SH1, SH2) RNA-Seq, can you please replot the heat map with these gene list. Attached is the previous heatmap. Please keep the gene order as shown here.
+ 
+UPREGULATED
+HLA-A, HLA-B, HLA-C, HLA-E, B2M, NLRC5, TAP1, TAP2, TAPBP, TNFAIP3, TNFRSF9, MICB, ULBP2, RAET1E, ICAM1, NCR3LG1
+SDC3, SDCBP2, CD274, PDCD1LG2
+
+DOWNREGULATED
+CEACAM5, CEACAM6, ATF4, SLC7A11, SLC1A5, SLC7A5, SLC3A2, SLC38A1, CTH, CBS, PHGDH, PSAT1, PSPH, ALDH1L2, MTHFD1L, CHAC1, BCAT1
+
+```{r}
+# set sample_list
+sample_list=c("cntrl1","cntrl2","kd_sh1_1","kd_sh1_2","kd_sh2_1","kd_sh2_2")
+  
+# read in rawcounts
+csid="ccbr1137"
+pipeliner_dir="/vf/users/CCBR/projects/ccbr1137/20211123_qc_hg38/"
+fpath=paste0(pipeliner_dir,"groups.tab")
+groups_df=read.csv(fpath,sep="\t",header=FALSE)
+
+fpath=paste0(pipeliner_dir,"DEG_ALL/RawCountFile_RSEM_genes.txt")
+raw_counts=read.csv(fpath,sep="\t")
+colnames(raw_counts)=SHORTEN_NAMES(colnames(raw_counts),"_expected_count")
+raw_counts=raw_counts[,c("symbol",sample_list)]
+out_raw_counts=separate(raw_counts,col="symbol",into=c("ENSEMBL","SYMBOL"),sep="[|]")
+fpath=paste0(output_dir,"replicate_prenormalized_",csid,".csv")
+write.csv(out_raw_counts,fpath)
+
+# filter
+## CPM is calcualted as "how many counts would I get for a gene if the sample 
+#had a library size of 1M".
+raw_counts=column_to_rownames(raw_counts)
+filtered=ceiling(raw_counts[,c(2:ncol(raw_counts))])
+cpm_counts=edgeR::cpm(as.matrix(filtered))
+rownames(filtered)=raw_counts$symbol
+
+# filter by threshold
+sample_count_threshold=round(ncol(raw_counts)*sample_consensus_threshold+.5)-1
+print(paste0("Filtering for genes with min reads in at least ",sample_count_threshold," samples."))
+keep=rowSums(cpm_counts>0.5)>sample_count_threshold
+filtered=filtered[keep,]
+head(filtered)
+
+# run deseq norm
+x=subset(groups_df,V1 %in% sample_list)$V2
+x=as.factor(x)
+set <- newSeqExpressionSet(as.matrix(filtered),
+                           phenoData = data.frame(x, row.names=colnames(filtered)))
+dds <- DESeqDataSetFromMatrix(countData = counts(set),
+                                    colData = pData(set),
+                                    design = ~ x)
+dds <- DESeq(dds)
+
+# normalize count matrix
+Normalized_counts_matrix<-as.data.frame(counts(dds, norm=TRUE))
+rownames(Normalized_counts_matrix)=filtered$symbol
+
+# add flags for passing
+sample_count_threshold=round(length(sample_list)*sample_consensus_threshold+.5)-1
+Normalized_counts_matrix$sample_threshold=rowSums(Normalized_counts_matrix[,sample_list] > (read_minimum_threshold-1))
+Normalized_counts_matrix$sample_threshold_flag=ifelse(Normalized_counts_matrix$sample_threshold > sample_consensus_threshold,"Y","N")
+rownames(Normalized_counts_matrix)=rownames(filtered)
+head(Normalized_counts_matrix)
+fpath=paste0(output_dir,"replicate_normalized_",csid,".csv")
+write.csv(Normalized_counts_matrix,fpath)
+```
+
+```{r}
+# sample selection
+sample_list=c("cntrl1","cntrl2","kd_sh1_1","kd_sh1_2","kd_sh2_1","kd_sh2_2")
+
+# gene list
+gene_list=c("HLA-A","HLA-B","HLA-C","HLA-E","B2M","NLRC5","TAP1","TAP2","TAPBP","TNFAIP3","TNFRSF9","MICB","ULBP2","RAET1E","ICAM1","NCR3LG1","SDC3","SDCBP2","CD274","PDCD1LG2")
+NEW_HEATMAP("UPREGULATED")
+
+# gene list
+gene_list=c("CEACAM5","CEACAM6","ATF4","SLC7A11","SLC1A5","SLC7A5","SLC3A2","SLC38A1","CTH","CBS","PHGDH","PSAT1","PSPH","ALDH1L2","MTHFD1L","CHAC1","BCAT1")
+NEW_HEATMAP("DOWNREGULATED")
+
+# gene list
+gene_list=c("HLA-A","HLA-B","HLA-C","HLA-E","B2M","NLRC5","TAP1","TAP2","TAPBP","TNFAIP3","TNFRSF9","MICB","ULBP2","RAET1E","ICAM1","NCR3LG1","SDC3","SDCBP2","CD274","PDCD1LG2","CEACAM5","CEACAM6","ATF4","SLC7A11","SLC1A5","SLC7A5","SLC3A2","SLC38A1","CTH","CBS","PHGDH","PSAT1","PSPH","ALDH1L2","MTHFD1L","CHAC1","BCAT1")
+NEW_HEATMAP("SELECTION")
+
+```

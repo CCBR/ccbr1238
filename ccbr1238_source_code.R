@@ -1817,3 +1817,86 @@ main_selectpath_function<-function(cntrl_in,treat_in,type_in,t2g,path_id){
   # return DT
   return(p)
 }
+
+NEW_HEATMAP<-function(title_in){
+  # read in counts matrix
+  scale_flag="ON"
+  name_flag="ON"
+  fpath=paste0(output_dir,"replicate_normalized_",csid,".csv")
+  counts_matrix=read.csv(fpath,sep=",")
+  counts_matrix=separate(counts_matrix,col="X",into=c("ENSEMBL","SYMBOL"),sep="[|]")
+  nrow(counts_matrix)
+  
+  # filter for genes meeting threshold
+  counts_matrix_filtered=subset(counts_matrix,sample_threshold_flag=="Y")
+  nrow(counts_matrix_filtered)
+  
+  # filter for gene_list provided
+  print("**Subsetting based on gene_list provided")
+  counts_matrix_subset=subset(counts_matrix_filtered,SYMBOL %in% gene_list)
+  missing_genes=gene_list[gene_list%ni%unique(counts_matrix_subset$SYMBOL)]
+  if(length(missing_genes)>0){print(paste0("The following genes are missing:",missing_genes))}
+  print("The following genes are included:")
+  print(unique(counts_matrix_subset$SYMBOL))
+  
+  # sort
+  counts_matrix_subset = counts_matrix_subset %>% arrange(match(SYMBOL,gene_list))
+  head(counts_matrix_subset)
+  
+  # pull rowname
+  rownames(counts_matrix_subset)=make.unique(counts_matrix_subset$SYMBOL)
+  head(counts_matrix_subset)
+  
+  # Subet for samples
+  print("**Subsetting based on sample_list provided")
+  counts_matrix_subset=counts_matrix_subset[,sample_list]
+  
+  # ztransform df
+  counts_matrix_complete=t(scale(t(counts_matrix_subset)))
+  
+  # fix any nan or inf
+  counts_matrix_complete[is.nan(counts_matrix_complete)] <- 0
+  counts_matrix_complete[counts_matrix_complete=="Inf"] <- 0
+  
+  # set fpath
+  fpath=paste0(img_dir,"replicate_heatmap_withscale_")
+  
+  # shorten col names
+  colnames(counts_matrix_complete)=gsub("pt",".",colnames(counts_matrix_complete))
+  print("**Generating heatmaps")
+  
+  # write out file
+  fpath_f=paste0(fpath,"heatmap.csv")
+  write.csv(counts_matrix_complete,fpath_f)
+  
+  # generate heatmap
+  fpath=paste0(fpath,"heatmap.pdf")
+  df_in=counts_matrix_complete
+  show_names="ON"
+  cluster_by_rows="OFF"
+  assignInNamespace(x="draw_colnames", value="DRAW_COLNAMES_45",ns=asNamespace("pheatmap")) 
+  
+  # Heatmap Color Gradients 
+  paletteLength <- 1000
+  mycolors <- colorRampPalette(c("blue","white","red"), interpolate = "linear")(paletteLength)
+  
+  # Creating Dataframe to map samplenames to groups
+  meta = groups_df
+  groups <- data.frame(as.factor(meta$group))
+  colnames(groups) <- "Groups"
+  rownames(groups) <- meta$sampleid
+  
+  # Creating Group Column Annotation Colors
+  columnColors <- c("lightpink","lightblue","orange","purple","red","green","darkblue","brown")
+  names(columnColors) <- unique(groups$Groups)
+  anno_colors <- list(Groups = columnColors)
+  
+  # plot
+  sub_anno=structure(list(group = groups_df$V2), .Names = "group", row.names =groups_df$V1, class = "data.frame")
+  p=pheatmap(df_in,
+             scale = "none", main=title_in,
+             cellwidth = 30, fontsize = 12, fontsize_row = 5, fontsize_col = 8, color = mycolors, 
+             border_color = "NA",cluster_cols=F,cluster_rows=F,annotation_colors = anno_colors, 
+             annotation_col = sub_anno, show_rownames = TRUE)
+  SAVE_PHEATMAP_PDF(p, fpath)
+}

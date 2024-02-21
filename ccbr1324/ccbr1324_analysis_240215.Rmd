@@ -1,0 +1,266 @@
+---
+title: "ccbr1311_240130"
+author: "Samantha Sevilla"
+date: "2024-01-30"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, echo=FALSE, include=FALSE, message=FALSE, warn=FALSE}
+parent_dir="/data/CCBR/projects/ccbr1324/"
+rna_dir=paste0(parent_dir,"analysis/renee_240214/")
+output_dir=paste0(parent_dir,"analysis/ranalysis_240130/")
+img_dir=paste0(output_dir,"img/")
+ipa_dir=paste0(parent_dir,"analysis/ipa_240220")
+dir.create(file.path(output_dir), showWarnings = FALSE)
+dir.create(file.path(img_dir), showWarnings = FALSE)
+
+padj_cutoff=0.05
+log2fc_set=1.1
+species_in="Mus musculus"
+org_db="org.Mm.eg.db"
+species_short="mm"
+
+```
+
+```{r libs, echo=FALSE, include=FALSE, message=FALSE, warn=FALSE}
+# source functions
+source("functions.R")
+
+# install as needed, load packages
+list.of.packages=c("RColorBrewer","ggfortify","DT","ggVennDiagram",
+                   "EnhancedVolcano","org.Mm.eg.db","dplyr","ggrepel","msigdbr",
+                   "ggpubr","EDASeq","PCAtools","dplyr","pheatmap","DESeq2","clusterProfiler",
+                   "biomaRt","tidyverse","scales","cowplot")
+handle_packages(list.of.packages)
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene::TxDb.Mmusculus.UCSC.mm10.knownGene
+
+#negate
+`%ni%` <- Negate(`%in%`)
+```
+
+```{r metadata, include=FALSE, message=FALSE, warn=FALSE}
+rna_meta_file=paste0(parent_dir,"docs/rna_meta.csv")
+rna_meta=read.csv(rna_meta_file)
+rownames(rna_meta)=rna_meta$filename
+head(rna_meta)
+
+exclude_list=c("")
+print(paste0("The following samples are excluded: ", exclude_list))
+rna_meta=subset(rna_meta, sampleid %ni% exclude_list)
+DT::datatable(rna_meta)
+
+#set colors
+colors <- brewer.pal(6, "Set2")
+g=unique(rna_meta$group)
+g=as.factor(g)#set pheno data
+
+m=unique(rna_meta$method)
+m=as.factor(m)#set pheno data
+```
+
+# RNA Analysis {.tabset}
+
+```{r norm_genes, include=FALSE, message=FALSE, warn=FALSE}
+# bring in counts
+counts_file=paste0(rna_dir,"DEG_ALL/RSEM.genes.expected_count.all_samples.txt")
+counts_df=read.csv(counts_file,sep="\t")
+colnames(counts_df)=gsub("X","",colnames(counts_df))
+colnames(counts_df)=gsub("_001","",colnames(counts_df))
+head(counts_df)
+
+#######################################
+## filter and convert to matrix
+filtered_df=filter_low_counts(counts_df)
+filtered_mat=counts_dat_to_matrix(filtered_df)
+```
+
+
+## Quality {.tabset}
+
+The first two plots show the data before and after normalization. PCA plots are difficult to review given the sample size.
+
+PCA's were regenerated larger, using a different tool to correlate variance. Here you can see the overall clustering of samples by group and within groups.
+
+The Eigencor plot shows effect of group, harvestID and biological replicates on principal components. Significant effects were observed group (PC1) and harvestID and biologicalReplicates (PC2). The scale bar represents Eigenvalues (− 1 to 1, with 0 having no correlation). For this analysis the lower 10% of variables based on variance were removed.
+
+### Method {.tabset}
+
+Due to processing differences, method was first reviewed. 
+
+```{r method, include=FALSE, message=FALSE, warn=FALSE}
+#######################################
+# DESEQ2
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = filtered_mat,
+                                colData = rna_meta[,c("sampleid","method")],
+                                design = ~ method)
+dds <- DESeq2::DESeq(dds)
+res <- DESeq2::results(dds)
+
+## pull data
+Normalized_counts_matrix=as.data.frame(counts(dds, norm=TRUE))
+Normalized_counts_matrix$gene_id=rownames(Normalized_counts_matrix)
+Normalized_counts_matrix=Normalized_counts_matrix %>%
+    tidyr::separate(gene_id,sep="[.]",c("ENSEMBL","ID")) 
+fpath=paste0(output_dir,"normalized_counts.csv")
+
+PLOT_RLE_PCA(filtered_mat[,c(2:ncol(filtered_mat))],"Fig. Before Normalization\nAll Samples",g)
+PLOT_RLE_PCA(Normalized_counts_matrix[,c(1:(ncol(Normalized_counts_matrix)-2))],"Fig. After Normalization\nAll Samples",m)
+
+PLOT_PCA(dds,rna_meta,"","All Samples","raw","method")
+PLOT_PCA(dds,rna_meta,"","All Samples","normalized","method")
+
+# norm read differences by method
+vst <- assay(vst(dds))
+rownames(rna_meta)=rna_meta$sampleid
+rna_meta=dplyr::slice(rna_meta,match(as.vector(colnames(vst)), rna_meta$sampleid))
+p <- PCAtools::pca(vst, metadata = rna_meta, removeVar = 0.1)
+PCAtools::eigencorplot(p,
+    metavars = c('group','method'))
+
+# run with both variables
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = filtered_mat,
+                                colData = rna_meta[,c("sampleid","method","group")],
+                                design = ~ method + group)
+dds <- DESeq2::DESeq(dds)
+res <- DESeq2::results(dds)
+select <- order(rowMeans(counts(dds,normalized=TRUE)),
+                decreasing=TRUE)[1:20]
+df <- as.data.frame(colData(dds)[,c("method","group")])
+pheatmap(assay(vst(dds))[select,], cluster_rows=FALSE, show_rownames=FALSE,
+         cluster_cols=FALSE, annotation_col=df)
+```
+
+### Group {.tabset}
+
+Evaluation of the methods parameters led to exclusion of all `std` samples. Normalization is performed without these samples, to determine the effects of groups.
+
+```{r}
+# subset data to excluse any std samples
+exclude_list=c("13_IMPACT_8_std","2_CNTRL_2_std","5_CNTRL_5_std","6_CNTRL_6_std","7_IMPACT_1_std","8_IMPACT_2_std")
+print(paste0("The following samples are excluded: ", exclude_list))
+rna_meta_sub=subset(rna_meta, sampleid %ni% exclude_list)
+DT::datatable(rna_meta_sub)
+filtered_mat_sub=filtered_mat[,c(rna_meta_sub$sampleid)]
+
+# DESEQ2
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = filtered_mat_sub,
+                                colData = rna_meta_sub[,c("sampleid","group")],
+                                design = ~ group)
+dds <- DESeq2::DESeq(dds)
+res <- DESeq2::results(dds)
+
+## pull data
+Normalized_counts_matrix=as.data.frame(counts(dds, norm=TRUE))
+Normalized_counts_matrix$gene_id=rownames(Normalized_counts_matrix)
+Normalized_counts_matrix=Normalized_counts_matrix %>%
+    tidyr::separate(gene_id,sep="[.]",c("ENSEMBL","ID")) 
+
+PLOT_RLE_PCA(Normalized_counts_matrix[,c(1:(ncol(Normalized_counts_matrix)-2))],"Fig. After Normalization\nAll Samples",g)
+PLOT_PCA(dds,rna_meta_sub,"","All Samples","normalized","group")
+```
+
+Samples are still unbalanced. A subset of remaning samples were included.
+```{r}
+# subset data to excluse any std samples
+exclude_list=c("13_IMPACT_8_std","2_CNTRL_2_std","5_CNTRL_5_std",
+               "6_CNTRL_6_std","7_IMPACT_1_std","8_IMPACT_2_std","10_IMPACT_4","11_IMPACT_5",
+               "1_CNTRL_1","13_IMPACT_8","4_CNTRL_4","3_CNTRL_3")
+print(paste0("The following samples are excluded: ", exclude_list))
+rna_meta_sub=subset(rna_meta, sampleid %ni% exclude_list)
+DT::datatable(rna_meta_sub)
+filtered_mat_sub=filtered_mat[,c(rna_meta_sub$sampleid)]
+
+# DESEQ2
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = filtered_mat_sub,
+                                colData = rna_meta_sub[,c("sampleid","group")],
+                                design = ~ group)
+dds <- DESeq2::DESeq(dds)
+res <- DESeq2::results(dds)
+
+## pull data
+Normalized_counts_matrix=as.data.frame(counts(dds, norm=TRUE))
+Normalized_counts_matrix$gene_id=rownames(Normalized_counts_matrix)
+Normalized_counts_matrix=Normalized_counts_matrix %>%
+    tidyr::separate(gene_id,sep="[.]",c("ENSEMBL","ID")) 
+
+PLOT_RLE_PCA(Normalized_counts_matrix[,c(1:(ncol(Normalized_counts_matrix)-2))],"Fig. After Normalization\nAll Samples",g)
+PLOT_PCA(dds,rna_meta_sub,"","Subset Samples","normalized","group")
+```
+
+```{r anno, echo=FALSE}
+# annotation
+annotated_df=as.data.frame(res)
+annotated_df$ENSEMBL=rownames(annotated_df)
+annotated_df=annotated_df %>%
+    tidyr::separate(ENSEMBL,sep="[.]",c("ENSEMBL","ID")) 
+mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+mouse_res <- getBM(attributes = c("ensembl_gene_id", "external_gene_name","chromosome_name",
+                            'strand','transcript_start','transcript_end'), 
+             mart = mouse)
+annotated_df=merge(annotated_df,mouse_res,by.x="ENSEMBL",by.y="ensembl_gene_id",all.x=TRUE)
+
+# remove dup ensembl
+annotated_df=annotated_df[!duplicated(annotated_df$ENSEMBL), ]
+head(annotated_df)
+colnames(annotated_df)=gsub("external_gene_name","SYMBOL",colnames(annotated_df))
+```
+
+```{r sig}
+# determine sig
+log2_cutoff=1.1
+padj_cutoff=0.05
+annotated_df$significance="N"
+annotated_df$significance[abs(annotated_df$log2FoldChange)>log2_cutoff & annotated_df$padj<padj_cutoff ]="Y"
+
+# print out result
+print(paste0("--the number of significant genes found: ",nrow(subset(annotated_df,significance=="Y"))))
+  
+# write out DEG
+fpath=paste0(output_dir,"DEG_sigs.csv")
+write.csv(annotated_df,fpath,row.names=FALSE)
+```
+
+```{r gsea}
+# gather gene list
+ref_list=c("H","C1","C5:CC","C5:BP","C5:MF","C2:WIKIPATHWAYS","C2:REACTOME","C2:BIOCARTA")
+for (ref in ref_list){
+  # create a gene list with the necessary geneID formatting
+  gl=deg2geneList(annotated_df,ref)
+  
+  RUN_CLUSTERPROFILER(ref)
+}
+```
+
+
+```{r}
+# read in ipa results
+fpath=paste0(parent_dir,"/analysis/ipa_240220/upstream_regulators.txt")
+ipa_results=read.csv(fpath,sep="\t")
+mol_list=c("cytokine","transcription regulator","growth factor","kinase","transmembrane receptor")
+
+nmol_list=c("1","2","3")
+for (nmol in nmol_list){
+  PLOT_REGULATORS(nmol)
+}
+PLOT_REGULATORS<-function(nmol){
+  print(paste0("--molecules 1 to ",nmol))
+  
+  # create top mol list
+  mol_num=c(1:nmol)
+  top_df=create_top_list(ipa_results,mol_num)
+    
+  # create plot
+  create_zscore_pvalue_plot(top_df,mol_num)
+    
+  #create DT
+  select_cols=c("Molecule.Type","Upstream.Regulator","Activation.z.score","p.value.of.overlap","logpvalue")
+  out_df=top_df[,select_cols]
+  out_df$logpvalue=signif(out_df$logpvalue, 4)
+  colnames(out_df)=c("Molecule.Type","Upstream.Regulator","Activation.z.score","pvalue","log10.pvalue")
+  DT::datatable(out_df,caption = paste0("Top ", max(mol_num), " Upstream Regulators by Molecule Type"))
+}
+```
+
+

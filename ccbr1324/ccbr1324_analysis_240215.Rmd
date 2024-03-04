@@ -32,7 +32,10 @@ source("functions.R")
 list.of.packages=c("RColorBrewer","ggfortify","DT","ggVennDiagram",
                    "EnhancedVolcano","org.Mm.eg.db","dplyr","ggrepel","msigdbr",
                    "ggpubr","EDASeq","PCAtools","dplyr","pheatmap","DESeq2","clusterProfiler",
-                   "biomaRt","tidyverse","scales","cowplot")
+                   "biomaRt","tidyverse","scales","cowplot","immunedeconv",'tibble', 'survival', 'survminer', 'limma',
+                   "DESeq2","devtools", 'limSolve', 'GSVA', 'e1071', 'preprocessCore', 
+                   "devtools", "tidyHeatmap", "caret", "glmnet", "ppcor",  "timeROC", "pracma", "factoextra", 
+                   "FactoMineR", "WGCNA", "patchwork", 'ggplot2', "biomaRt", 'ggpubr', 'ComplexHeatmap')
 handle_packages(list.of.packages)
 txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene::TxDb.Mmusculus.UCSC.mm10.knownGene
 
@@ -119,6 +122,7 @@ p <- PCAtools::pca(vst, metadata = rna_meta, removeVar = 0.1)
 PCAtools::eigencorplot(p,
     metavars = c('group','method'))
 
+#######################################
 # run with both variables
 dds <- DESeq2::DESeqDataSetFromMatrix(countData = filtered_mat,
                                 colData = rna_meta[,c("sampleid","method","group")],
@@ -134,7 +138,7 @@ pheatmap(assay(vst(dds))[select,], cluster_rows=FALSE, show_rownames=FALSE,
 
 ### Group {.tabset}
 
-Evaluation of the methods parameters led to exclusion of all `std` samples. Normalization is performed without these samples, to determine the effects of groups.
+Evaluation of the methods parameters led to exclusion of all `std` samples first. Normalization is performed without these samples, to determine the effects of groups.
 
 ```{r}
 # subset data to excluse any std samples
@@ -189,6 +193,32 @@ PLOT_RLE_PCA(Normalized_counts_matrix[,c(1:(ncol(Normalized_counts_matrix)-2))],
 PLOT_PCA(dds,rna_meta_sub,"","Subset Samples","normalized","group")
 ```
 
+Next the exclusion of all `high-sensitivity` samples was performed Normalization is performed without these samples, to determine the effects of groups.
+
+```{r}
+#######################################
+# run with only std samples
+# DESEQ2
+sub_sample_list=subset(rna_meta,method=="std")$sampleid
+sub_filtered_mat=filtered_mat[,sub_sample_list]
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = sub_filtered_mat,
+                                colData = subset(rna_meta,method=="std")[,c("sampleid","group")],
+                                design = ~ group)
+dds <- DESeq2::DESeq(dds)
+res <- DESeq2::results(dds)
+
+## pull data
+Normalized_counts_matrix=as.data.frame(counts(dds, norm=TRUE))
+Normalized_counts_matrix$gene_id=rownames(Normalized_counts_matrix)
+Normalized_counts_matrix=Normalized_counts_matrix %>%
+    tidyr::separate(gene_id,sep="[.]",c("ENSEMBL","ID")) 
+
+PLOT_RLE_PCA(filtered_mat[,c(2:ncol(filtered_mat))],"Fig. Before Normalization\nSTD Samples",g)
+PLOT_RLE_PCA(Normalized_counts_matrix[,c(1:(ncol(Normalized_counts_matrix)-2))],"Fig. After Normalization\nAll Samples",m)
+PLOT_PCA(dds,subset(rna_meta,method=="std"),"","STD Samples","normalized","group")
+
+```
+
 ```{r anno, echo=FALSE}
 # annotation
 annotated_df=as.data.frame(res)
@@ -216,10 +246,27 @@ annotated_df$significance[abs(annotated_df$log2FoldChange)>log2_cutoff & annotat
 
 # print out result
 print(paste0("--the number of significant genes found: ",nrow(subset(annotated_df,significance=="Y"))))
-  
-# write out DEG
 fpath=paste0(output_dir,"DEG_sigs.csv")
 write.csv(annotated_df,fpath,row.names=FALSE)
+
+# create df for heatmap
+sig_annotated_df=subset(annotated_df,significance=="Y")
+sig_ensembl=sig_annotated_df[order(sig_annotated_df$padj),][1:10,"ENSEMBL"]
+heatmap_df=subset(Normalized_counts_matrix,ENSEMBL %in% sig_ensembl)
+heatmap_df=heatmap_df[,c(sub_sample_list)]
+heatmap_df
+
+pheatmap(as.matrix(heatmap_df), 
+         cluster_rows = TRUE,  # Cluster rows
+         cluster_cols = TRUE,  # Cluster columns
+         color = colorRampPalette(c("blue", "white", "red"))(100),  # Color scheme
+         main = "Top (10) Differential Expression Heatmap",  # Main title
+         fontsize = 8,  # Font size
+         cellwidth = 15,  # Width of each cell
+         cellheight = 15,  # Height of each cell
+         show_rownames = TRUE,  # Show gene names on the heatmap
+         show_colnames = TRUE  # Show sample names on the heatmap
+)
 ```
 
 ```{r gsea}
@@ -263,4 +310,126 @@ PLOT_REGULATORS<-function(nmol){
 }
 ```
 
+## CIBERSORT
+
+Need to convert to TPM
+```{r}
+# subset data to excluse any std samples
+sub_sample_list=subset(rna_meta,method=="std")$sampleid
+sub_filtered_mat=filtered_mat[,sub_sample_list]
+
+# Normalize counts by library size (e.g., total counts per sample)
+library_size <- colSums(sub_filtered_mat)
+normalized_counts <- t(t(sub_filtered_mat) / library_size)
+
+# Scale normalized counts to TPM
+tpm <- as.data.frame(normalized_counts / (colSums(normalized_counts) / 1e6))
+tpm$ENSEMBL=rownames(tpm)
+
+# split ensembl
+tpm=tpm %>%
+    tidyr::separate(ENSEMBL,sep="[.]",c("ENSEMBL","ID")) 
+
+# assign rownames
+rownames(tpm)=make.unique(tpm$ENSEMBL)
+
+#read gene expression matrix 
+tpm_fpath="/data/CCBR/projects/ccbr1324/analysis/cibersort_240303/tpm.txt"
+write.table(tpm[,sub_sample_list],tpm_fpath,sep = "\t")
+```
+
+```{r}
+### this was not used - producing inaccurate results
+#https://github.com/JingYangSciBio/Immu-Mela/blob/master/CIBERSORT.R
+
+#load CIBERSORT source code and signature matrix 
+source("CIBERSORT.R")
+
+# load sig matrix
+fpath = "/data/CCBR/projects/ccbr1324/analysis/cibersort_240303/SignatureMatrix.rnaseq.tsv"
+sig_matrix=read.csv(fpath,sep="\t",row.names = 1)
+head(sig_matrix)
+
+#Run CIBERSORT abs 
+#The number of permutation
+cibersort_perm = 100
+#Quantile normalization of input mixture, default = FALSE for RNA-Seq data
+cibersort_qn = FALSE
+#whether to apply absolute mode in cibersort
+cibersort_abs = TRUE
+#sig.score = for each mixture sample, define S as the median expression,level of all genes in the signature matrix divided by the median expression level of all genes in the mixture. Multiple cell subset fractions by S.
+cibersort_abs_method = "sig.score"
+
+# run cibersort
+res_ciber <- CIBERSORT(sig_matrix, tpm[,sub_sample_list], perm = cibersort_perm, QN = cibersort_qn, absolute = cibersort_abs,
+                       abs_method = cibersort_abs_method)
+res_df=as.data.frame(res_ciber)
+res_df$sampleid=rownames(res_df)
+
+# save results
+fpath="/data/CCBR/projects/ccbr1324/analysis/cibersort_240303/cibersort_output.txt"
+write.csv(res_ciber,fpath)
+```
+
+# plot
+```{r}
+# read in cibersort web output
+fpath="/data/CCBR/projects/ccbr1324/analysis/cibersort_240303/CIBERSORTx_Job4_Results.csv"
+res_df=read.csv(fpath)
+head(res_df)
+
+#https://github.com/IOBR/IOBR/blob/master/R/cell_bar_plot.R
+res_df_pivot=as.data.frame(pivot_longer(res_df[,c("Mixture",colnames(res_df)[2:11])], 
+                                  cols = -Mixture, names_to = "Variable", values_to = "Value"))
+cols<-IOBR::palettes(category = "random", palette = 4, show_col = T, show_message = T)
+title = "CIBERSORT Cell Fraction"
+legend.direction<-"horizontal"
+legend.position="bottom"
+
+# plot as stacked bar chart
+p = ggplot(res_df_pivot,aes(x=Mixture, y=Value, fill=Variable)) +
+  geom_bar(stat='identity') +
+  coord_flip() +
+  theme_light() +
+  scale_fill_manual(values = cols) +
+  scale_x_discrete(limits = rev(levels(input)))+
+  ggtitle(paste0(title))+
+  theme(plot.title=element_text(size=rel(2),hjust=0.5),
+        axis.text.x= element_text(face="plain",angle=0,hjust = 1,color="black"),
+        axis.text.y= element_text(face="plain",angle= 30,hjust = 1,color="black"))+
+  theme(legend.title = element_blank(),
+        legend.position= legend.position,
+        legend.direction= legend.direction,
+        legend.justification=c(.5,.5),
+        legend.box="horizontal",
+        legend.box.just="top")
+print(p)
+fpath="/data/CCBR/projects/ccbr1324/analysis/cibersort_240303/complete_bar.png"
+ggsave(fpath,p)
+
+# plot as a pie chart
+for (sampleid in sub_sample_list){
+  title=paste0("Cell Fraction: ",sampleid)
+  sub_res_df_pivot=subset(res_df_pivot,Mixture==sampleid)%>%
+    arrange(desc(Variable)) %>%
+    mutate(csum = rev(cumsum(rev(Value))), 
+           pos = Value/2 + lead(csum, 1),
+           pos = if_else(is.na(pos), Value/2, pos))
+  
+  p = ggplot(sub_res_df_pivot, aes(x = "" , y = Value, fill = fct_inorder(Variable))) +
+    geom_col(width = 1, color = 1) +
+    coord_polar(theta = "y") +
+    scale_fill_manual(values = cols) +
+    geom_label_repel(data = sub_res_df_pivot,
+                     aes(y = pos, label = paste0(round(Value*100,1),"%")),
+                     size = 4.5, nudge_x = 1, show.legend = FALSE) +
+    guides(fill = guide_legend(title = "Group")) +
+    theme_void() + 
+    ggtitle(paste0(title))
+  
+  print(p)
+  fpath=paste0("/data/CCBR/projects/ccbr1324/analysis/cibersort_240303/pie_",sampleid,".png")
+  ggsave(fpath,p)
+}
+```
 

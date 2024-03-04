@@ -1044,7 +1044,7 @@ SAVE_PHEATMAP_PDF <- function(x, filename, width=7, height=7) {
 # creates heatmap for multiple replicates
 PLOT_HEAT_MAP<-function(df_in,show_names="ON",title_in="",cluster_by_rows="ON",fpath=""){
   #df_in=counts_matrix_complete;show_names="OFF";title_in="";cluster_by_rows="ON";fpath=fpath
-  
+
   ####################
   # formatting
   #####################
@@ -1128,9 +1128,6 @@ MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
   print("The following genes are included:")
   print(unique(counts_matrix_subset$SYMBOL))
   
-  # sort
-  counts_matrix_subset = counts_matrix_subset %>% arrange(SYMBOL)
-
   # pull rowname
   rownames(counts_matrix_subset)=make.unique(counts_matrix_subset$SYMBOL)
   head(counts_matrix_subset)
@@ -1138,6 +1135,8 @@ MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
   # Subet for samples
   print("**Subsetting based on sample_list provided")
   counts_matrix_subset=counts_matrix_subset[,sample_list]
+  counts_matrix_subset=counts_matrix_subset[gene_list,]
+  print(counts_matrix_subset)
   
   # scale, if needed
   if (scale_flag=="ON"){
@@ -1145,10 +1144,12 @@ MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
     
     # ztransform df
     counts_matrix_complete=t(scale(t(counts_matrix_subset)))
+    head(counts_matrix_complete)
+    #counts_matrix_complete=t(scale(t(counts_matrix_subset)))
     
     # fix any nan or inf
     counts_matrix_complete[is.nan(counts_matrix_complete)] <- 0
-    counts_matrix_complete[counts_matrix_complete=="Inf"] <- 0
+    #counts_matrix_complete[counts_matrix_complete=="Inf"] <- 0
     range(counts_matrix_complete)
     
     # set fpath
@@ -1161,12 +1162,13 @@ MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
     # set fpath
     fpath=paste0(img_dir,"replicate_heatmap_withoutscale_")
   }
-  
+
   # shorten col names
   colnames(counts_matrix_complete)=gsub("pt",".",colnames(counts_matrix_complete))
+  head(counts_matrix_complete)
   
-  print("**Generating heatmaps")
   # write out file
+  print("**Generating heatmaps")
   fpath_f=paste0(fpath,"heatmap.csv")
   write.csv(counts_matrix_complete,fpath_f)
   

@@ -10,7 +10,7 @@ editor_options:
 ```{r setup, echo=FALSE, include=FALSE, message=FALSE, warn=FALSE}
 parent_dir="/data/CCBR/projects/ccbr1324/"
 rna_dir=paste0(parent_dir,"analysis/renee_240214/")
-output_dir=paste0(parent_dir,"analysis/ranalysis_240130/")
+output_dir=paste0(parent_dir,"analysis/ranalysis_240215/")
 img_dir=paste0(output_dir,"img/")
 ipa_dir=paste0(parent_dir,"analysis/ipa_240220")
 dir.create(file.path(output_dir), showWarnings = FALSE)
@@ -26,7 +26,7 @@ species_short="mm"
 
 ```{r libs, echo=FALSE, include=FALSE, message=FALSE, warn=FALSE}
 # source functions
-source("functions.R")
+source("/data/CCBR/projects/ccbr1324/github/ccbr1324/functions.R")
 
 # install as needed, load packages
 list.of.packages=c("RColorBrewer","ggfortify","DT","ggVennDiagram",
@@ -77,6 +77,9 @@ head(counts_df)
 ## filter and convert to matrix
 filtered_df=filter_low_counts(counts_df)
 filtered_mat=counts_dat_to_matrix(filtered_df)
+
+fpath=paste0(output_dir,"filtered_counts.csv")
+write.csv(filtered_df,fpath)
 ```
 
 
@@ -207,11 +210,16 @@ dds <- DESeq2::DESeqDataSetFromMatrix(countData = sub_filtered_mat,
 dds <- DESeq2::DESeq(dds)
 res <- DESeq2::results(dds)
 
+#set control/treatment inverse for PI
+res <- DESeq2::results(dds,contrast=c("group","CONTROL","IMPACT"))
+
 ## pull data
 Normalized_counts_matrix=as.data.frame(counts(dds, norm=TRUE))
 Normalized_counts_matrix$gene_id=rownames(Normalized_counts_matrix)
 Normalized_counts_matrix=Normalized_counts_matrix %>%
-    tidyr::separate(gene_id,sep="[.]",c("ENSEMBL","ID")) 
+    tidyr::separate(gene_id,sep="[.]",c("ENSEMBL","ID"))
+fpath=paste0(output_dir,"normalized_std_counts.csv")
+write.csv(Normalized_counts_matrix,fpath)
 
 PLOT_RLE_PCA(filtered_mat[,c(2:ncol(filtered_mat))],"Fig. Before Normalization\nSTD Samples",g)
 PLOT_RLE_PCA(Normalized_counts_matrix[,c(1:(ncol(Normalized_counts_matrix)-2))],"Fig. After Normalization\nAll Samples",m)
@@ -246,7 +254,7 @@ annotated_df$significance[abs(annotated_df$log2FoldChange)>log2_cutoff & annotat
 
 # print out result
 print(paste0("--the number of significant genes found: ",nrow(subset(annotated_df,significance=="Y"))))
-fpath=paste0(output_dir,"DEG_sigs.csv")
+fpath=paste0(output_dir,"DEG_sigs_CvsI.csv")
 write.csv(annotated_df,fpath,row.names=FALSE)
 
 # create df for heatmap

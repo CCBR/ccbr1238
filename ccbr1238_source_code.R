@@ -1109,15 +1109,29 @@ PLOT_HEAT_MAP<-function(df_in,show_names="ON",title_in="",cluster_by_rows="ON",f
 }
 
 # main function to prep and run plot_heat_map
-MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag){
+MAIN_REPLICATE_HEATMAPS<-function(sample_list,gene_list,scale_flag,name_flag,pre_flag="OFF"){
   # read in counts matrix
-  fpath=paste0(output_dir,"replicate_normalized_",csid,".csv")
+  if(pre_flag=="OFF"){
+    fpath=paste0(output_dir,"replicate_normalized_",csid,".csv")
+  } else{
+    fpath=paste0(output_dir,"replicate_prenormalized_",csid,".csv")
+  }
   counts_matrix=read.csv(fpath,sep=",")
-  counts_matrix=separate(counts_matrix,col="X",into=c("ENSEMBL","SYMBOL"),sep="[|]")
+  
+  # split if needed
+  if (sum(colnames(counts_matrix) %in% "SYMBOL")==0){
+    counts_matrix=separate(counts_matrix,col="X",into=c("ENSEMBL","SYMBOL"),sep="[|]")
+  }
+  #head(counts_matrix)
   nrow(counts_matrix)
   
   # filter for genes meeting threshold
-  counts_matrix_filtered=subset(counts_matrix,sample_threshold_flag=="Y")
+  if (sum(colnames(counts_matrix) %in% "sample_threshold_flag")>0){
+    counts_matrix_filtered=subset(counts_matrix,sample_threshold_flag=="Y")
+  } else{
+    counts_matrix_filtered=counts_matrix
+  }
+  #head(counts_matrix_filtered)
   nrow(counts_matrix_filtered)
   
   # filter for gene_list provided

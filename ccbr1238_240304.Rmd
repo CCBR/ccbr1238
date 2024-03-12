@@ -110,15 +110,31 @@ gene_list=c("Slc1a4","Slc1a5","Slc38a1","Slc38a2","Slc38a7","Slc38a9","Slc3a2",
             "Slc6a9","Slc7a1","Slc7a2","Slc7a3","Slc7a5","Slc7a7","Slc7a11")
 #sample_list=sample_list;gene_list=gene_list;scale_flag="ON";name_flag="ON"
 MAIN_REPLICATE_HEATMAPS(sample_list=sample_list,
-                            gene_list=gene_list,
-                            scale_flag="ON",
-                            name_flag="ON")
+                        gene_list=gene_list,
+                        scale_flag="ON",
+                        name_flag="ON")
 
 # gene list
 gene_list=c("Atf4","Phgdh","Psph","Psat1","Aldh1l2","Mthfd2","Shmt2","Mthfd1l","Cth","Bcat1",
-            "Gpt2","Gstp1","Gstp2","Gstk1","Gpx2","Gsta1","Chac1")
+            "Gpt2","Gstp1","Gstp2","Gstk1","Gpx2","Chac1")
 MAIN_REPLICATE_HEATMAPS(sample_list=sample_list,
-                            gene_list=gene_list,
-                            scale_flag="ON",
-                            name_flag="ON")
+                        gene_list=gene_list,
+                        scale_flag="ON",
+                        name_flag="ON",
+                        pre="ON")
+
+gene_list=c("Atf4","Phgdh","Psph","Psat1","Aldh1l2","Mthfd2","Shmt2","Mthfd1l","Cth","Bcat1",
+            "Gpt2","Gstp1","Gstp2","Gpx2","Chac1")
+MAIN_REPLICATE_HEATMAPS(sample_list=sample_list,
+                        gene_list=gene_list,
+                        scale_flag="ON",
+                        name_flag="ON")
+
+gene_list=c("Atf4","Phgdh","Psph","Psat1","Aldh1l2","Mthfd2","Shmt2","Mthfd1l","Cth","Bcat1",
+            "Gpt2","Slc6a9","Slc7a11","Gstp1","Gstp2","Gpx2","Chac1")
+MAIN_REPLICATE_HEATMAPS(sample_list=sample_list,
+                        gene_list=gene_list,
+                        scale_flag="ON",
+                        name_flag="ON")
+
 ```

@@ -138,3 +138,48 @@ MAIN_REPLICATE_HEATMAPS(sample_list=sample_list,
                         name_flag="ON")
 
 ```
+
+Plot pathways by pvalue
+```{r}
+ipa_pathways=read.csv("/data/CCBR/projects/ccbr1324/analysis/ipa_240303/pathway_analysis.csv")
+colnames(ipa_pathways)=c("pathway","pvalue","ratio","zscore","molecules")
+head(ipa_pathways)
+
+pathway_list=c("Tumor Microenvironment Pathway","Granzyme A Signaling","IL-10 Signaling",
+               "PIP3 activates AKT signaling","IL-15 Signaling","mTOR Signaling",
+               "Class I MHC mediated antigen processing and presentation",
+               "Neutrophil Extracellular Trap Signaling Pathway",
+               "IL-8 Signaling")
+library(forcats)
+library(scales)
+ipa_pathways_sub=subset(ipa_pathways,pathway %in% pathway_list)
+
+scale_factor <-2
+ipa_pathways_sub$ratioPerc=(ipa_pathways_sub$ratio)*100
+
+ipa_pathways_sub %>%
+    ggplot(aes(x = pathway))+
+    geom_bar(aes(y = ratioPerc,fill=molecules),colour="red", stat="identity")+
+    geom_point(aes(y = pvalue,size=pvalue,color=""),shape=20, cex=8)+ # create dummy points so pvalue legend symbol appears
+    geom_point(aes(y = pvalue,size=pvalue),shape=20, cex=8,color="blue")+
+    scale_color_manual(name = "log10(pvalue) x \nActivation Z Score",values = c(" " = "blue")) + # add legened for pvalue point
+    scale_fill_brewer(direction = -1, palette = "Pastel2")+ # change palette for bars
+    coord_flip()+ # flip x and y axis
+    scale_y_continuous(sec.axis = sec_axis(~ .*1, #create a secondary "x" axis for the log10(pvalue data)
+                                           labels = number_format(scale=scale_factor), 
+                                           name="log10(pvalue) x sign of Activation Z Score"))+
+    xlab("Select Pathway")+
+    ylab("Gene Ratio %")+
+    theme_bw() + # remove grey background
+    theme( axis.line.x.top = element_line(color = "blue"),axis.ticks.x.top= element_line(color = "blue"), # change top x axis color to match pvalues
+           axis.text.x.top = element_text(color = "blue"),axis.title.x.top=element_text(colour="blue"))+
+    theme( axis.line.x.bottom = element_line(color = "red"),axis.ticks.x.bottom= element_line(color = "red"), # change bottom x axis color to match z scores
+           axis.text.x.bottom = element_text(color = "red"),axis.title.x.bottom=element_text(colour="red"))+
+    ggtitle(paste0("Select Pathways")) + # add title
+    theme(plot.title = element_text(size=22, face="bold")) + #  increase title
+    theme(legend.key=element_rect(fill=NA)) +# remove grey from pvalue background
+    labs(color="log10(pvalue) x \nActivation Z Score",fill="Activation Z Score")+ # change the order of the legend so log10 is on top
+    guides(fill  = guide_legend(order = 2),color = guide_legend(order = 1))+
+    theme(legend.position = "none") # remove legend
+```
+
